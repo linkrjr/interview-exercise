@@ -1,0 +1,94 @@
+{
+    "$schema": "http://json-schema.org/draft-06/schema#",
+    "$ref": "#/definitions/Report",
+    "definitions": {
+        "Report": {
+            "type": "object",
+            "description": "The full report json object",
+            "additionalProperties": false,
+            "properties": {
+                "clients": {
+                    "description": "A dictionary of clients. Each key is the client id. An entry for each client.",
+                    "properties": {
+                        "^acct_[0-9]+$": {
+                            "$ref": "#/definitions/Client"
+                        }
+                    }
+                },
+                "malformed_lines": {
+                    "description": "The number of malformed log entries in the provided log file.",
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "clients",
+                "malformed_lines"
+            ],
+            "title": "Report"
+        },
+        "Client": {
+            "title": "Client",
+            "type": "object",
+            "description": "The object representing the client",
+            "additionalProperties": false,
+            "properties": {
+                "logs": {
+                    "description": "A list of each log entry for the respective client",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/Log"
+                    }
+                },
+                "total_requests": {
+                    "description": "The total number of log entries for the client",
+                    "type": "integer"
+                },
+                "rate_limit_violated": {
+                    "description": "A flag for whether or not the client has violated rate limit",
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "logs",
+                "rate_limit_violated",
+                "total_requests"
+            ]
+        },
+        "Log": {
+            "type": "object",
+            "description": "The log entry itself",
+            "additionalProperties": false,
+            "properties": {
+                "request_id": {
+                    "description": "The request identifier",
+                    "type": "string"
+                },
+                "timestamp": {
+                    "description": "The timestamp when the request happened",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "client_id": {
+                    "description": "The client who made the request",
+                    "type": "string"
+                },
+                "endpoint": {
+                    "description": "The endpoint requested",
+                    "type": "string"
+                },
+                "status_code": {
+                    "description": "The request status.",
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "client_id",
+                "endpoint",
+                "request_id",
+                "status_code",
+                "timestamp"
+            ],
+            "title": "Log"
+        }
+    }
+}
