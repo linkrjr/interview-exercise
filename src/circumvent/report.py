@@ -49,7 +49,7 @@ def generate(
 
                 log_entry_time = log_entry.convert_timestamp()
                 if client_id in report.clients:
-                    client = Client(**report.clients[client_id])
+                    client = report.clients[client_id]
 
                     client.add_log_entry(log_entry)
 
@@ -61,7 +61,7 @@ def generate(
                         )
                         tracker.last_log_entry_time = log_entry_time
 
-                    report.clients[client_id] = dataclasses.asdict(client)
+                    report.clients[client_id] = client
 
                 else:
                     client = Client()
@@ -70,7 +70,7 @@ def generate(
                     track_client_rate_limit_violation[client_id] = RateLimitTracker(
                         log_entry_time, 0
                     )
-                    report.clients[client_id] = dataclasses.asdict(client)
+                    report.clients[client_id] = client
 
             except Exception:
                 malformed_lines += 1
