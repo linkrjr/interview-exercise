@@ -12,15 +12,39 @@ export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 export interface RequestOptions {
   body?: unknown;
   query?: Record<string, string | number | undefined>;
+  /** Parameters that are sent once per value, e.g. `skill=a&skill=b`. */
+  repeat?: Record<string, string[]>;
   /** `user` sends the stored access token (refreshing it transparently); `operator` sends the given token; `none` sends nothing. */
   auth: 'user' | 'operator' | 'none';
   operatorToken?: string;
 }
 
+interface BlockingMission {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+}
+interface OverlappingRange {
+  id: string;
+  from: string;
+  to: string;
+}
+
+/** The problem as text: the headline, field errors, and the extension members the API adds. */
 function messageFor(problem: ProblemDetails): string {
-  const fields = (problem.errors ?? []).map((e) => `  - ${e.field || 'request'}: ${e.message}`);
+  const lines = (problem.errors ?? []).map((e) => `  - ${e.field || 'request'}: ${e.message}`);
+  const missions = problem.missions as BlockingMission[] | undefined;
+  for (const m of Array.isArray(missions) ? missions : []) {
+    lines.push(`  - mission ${m.name} (${m.startDate} to ${m.endDate}, ${m.status}) [${m.id}]`);
+  }
+  const ranges = problem.unavailability as OverlappingRange[] | undefined;
+  for (const r of Array.isArray(ranges) ? ranges : []) {
+    lines.push(`  - existing range ${r.from} to ${r.to} [${r.id}]`);
+  }
   const head = `${problem.detail ?? problem.title} (${problem.code})`;
-  return fields.length > 0 ? `${head}\n${fields.join('\n')}` : head;
+  return lines.length > 0 ? `${head}\n${lines.join('\n')}` : head;
 }
 
 export class ApiClient {
@@ -74,6 +98,9 @@ export class ApiClient {
     const url = new URL(path.replace(/^\//, ''), base.endsWith('/') ? base : `${base}/`);
     for (const [key, value] of Object.entries(options.query ?? {})) {
       if (value !== undefined) url.searchParams.set(key, String(value));
+    }
+    for (const [key, values] of Object.entries(options.repeat ?? {})) {
+      for (const value of values) url.searchParams.append(key, value);
     }
     const token = options.auth === 'operator' ? options.operatorToken : accessToken;
     try {

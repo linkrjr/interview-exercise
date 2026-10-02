@@ -32,3 +32,37 @@ export function toPage<T extends { id: string }, U>(
     nextCursor: hasMore && last ? encodeCursor(last.id) : null,
   };
 }
+
+/** Opaque cursor over several string keys, for orderings that are not by id alone. */
+export function encodeKeyCursor(parts: Record<string, string>): string {
+  return Buffer.from(JSON.stringify(parts), 'utf8').toString('base64url');
+}
+
+export function decodeKeyCursor<K extends string>(
+  cursor: string,
+  validators: Record<K, (value: string) => boolean>,
+): Record<K, string> {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as Record<
+      string,
+      unknown
+    > | null;
+    const keys = Object.keys(validators) as K[];
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      keys.every((k) => typeof parsed[k] === 'string' && validators[k](parsed[k] as string))
+    ) {
+      return Object.fromEntries(keys.map((k) => [k, parsed[k] as string])) as Record<K, string>;
+    }
+  } catch {
+    // fall through
+  }
+  throw new AppError(ErrorCodes.INVALID_CURSOR, 400, 'The cursor is not valid');
+}
+
+export const isUuid = (value: string): boolean => UUID.test(value);
+
+/** The exact form `Date#toISOString` writes, which is what cursors carry. */
+export const isIsoTimestamp = (value: string): boolean =>
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && !Number.isNaN(Date.parse(value));

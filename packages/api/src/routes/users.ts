@@ -20,32 +20,32 @@ function userId(params: unknown): string {
 }
 
 export function userRoutes(app: FastifyInstance, deps: AppDeps): void {
-  const { identity, accessTokens } = deps;
+  const { services, accessTokens } = deps;
   const auth = { preHandler: authenticate(accessTokens) };
 
-  app.get('/v1/me', auth, async (request) => identity.users.me(requireActor(request)));
+  app.get('/v1/me', auth, async (request) => services.users.me(requireActor(request)));
 
   app.get('/v1/users', auth, async (request) => {
     const parsed = ListUsersQuerySchema.safeParse(request.query);
     if (!parsed.success) throw validationError(parsed.error);
-    return identity.users.list(requireActor(request), parsed.data);
+    return services.users.list(requireActor(request), parsed.data);
   });
 
   app.post('/v1/users', auth, async (request, reply) => {
     const parsed = InviteUserRequestSchema.safeParse(request.body);
     if (!parsed.success) throw validationError(parsed.error);
-    const result = await identity.users.invite(requireActor(request), parsed.data);
+    const result = await services.users.invite(requireActor(request), parsed.data);
     return reply.code(201).send(result);
   });
 
   app.patch('/v1/users/:id', auth, async (request) => {
     const parsed = UpdateUserRequestSchema.safeParse(request.body);
     if (!parsed.success) throw validationError(parsed.error);
-    return identity.users.update(requireActor(request), userId(request.params), parsed.data);
+    return services.users.update(requireActor(request), userId(request.params), parsed.data);
   });
 
   app.post('/v1/users/:id/invites', auth, async (request, reply) => {
-    const invite = await identity.users.reinvite(requireActor(request), userId(request.params));
+    const invite = await services.users.reinvite(requireActor(request), userId(request.params));
     return reply.code(201).send(invite);
   });
 }

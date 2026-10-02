@@ -3,31 +3,26 @@ import { Writable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { newId } from '@mc/db';
-import {
-  TEST_PASSWORD,
-  createIdentityHarness,
-  uniqueEmail,
-  type IdentityHarness,
-} from '@mc/core/testing';
+import { TEST_PASSWORD, createHarness, uniqueEmail, type Harness } from '@mc/core/testing';
 import { buildApp, loggerOptions } from './app.js';
 
 const urls = inject('dbUrls');
 const OPERATOR = 'operator-token-for-tests-0123456789abcdef';
 
-let h: IdentityHarness;
+let h: Harness;
 let app: FastifyInstance;
 const logLines: string[] = [];
 
 beforeAll(async () => {
   // The same sink receives the Fastify logs and the core services' logs.
-  h = await createIdentityHarness(urls, {
+  h = await createHarness(urls, {
     logger: {
       info: (obj, msg) => void logLines.push(JSON.stringify({ ...obj, msg })),
       warn: (obj, msg) => void logLines.push(JSON.stringify({ ...obj, msg })),
     },
   });
   app = buildApp({
-    identity: h,
+    services: h,
     accessTokens: h.accessTokens,
     operatorToken: OPERATOR,
     // Small limits keep the rate-limit tests short.
@@ -182,7 +177,7 @@ describe('problem responses', () => {
 
   it('turns unexpected failures into a generic 500 that leaks nothing', async () => {
     const broken = buildApp({
-      identity: {
+      services: {
         ...h,
         auth: {
           refresh: async () => {

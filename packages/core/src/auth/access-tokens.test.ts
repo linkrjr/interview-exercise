@@ -1,6 +1,6 @@
 import { SignJWT, generateKeyPair } from 'jose';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { TestClock } from '../testing/identity-harness.js';
+import { TestClock } from '../testing/harness.js';
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   AccessTokenService,

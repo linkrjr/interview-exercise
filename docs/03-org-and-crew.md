@@ -46,7 +46,7 @@ Anything on missions, holds creation, notifications or the matcher.
 
 ## Open points needing a product decision
 
-None open. Skill archiving is removed (DESIGN.md OQ-7). Renaming is OQ-11, implemented per its default (Directors may rename).
+None open. Skill archiving is removed (DESIGN.md OQ-7). Renaming is OQ-11, implemented per its default (Directors may rename). The questions raised while building were decided (see the implementation notes).
 
 ## Acceptance criteria
 
@@ -60,3 +60,19 @@ None open. Skill archiving is removed (DESIGN.md OQ-7). Renaming is OQ-11, imple
 ## Tests
 
 Permission matrix rows for these capabilities; cross-tenant 404 per endpoint; audit-atomicity test; filter correctness (skill level boundary, inclusive date ranges, adjacent-day edges); OQ-1 guard tests with directly inserted holds.
+
+## Implementation notes
+
+Status: implemented. Decisions taken while building, for the specs that follow:
+
+- **Audit:** `DbAuditWriter` (in `core`) writes through the caller's transaction, taking the organisation from `app.org_id` and the time from the injected `Clock`; the API server now uses it. Payloads containing keys that look like secrets (`password`, `token`, `secret`, `hash`, `invite_code`) are refused. Entity types in use: `user`, `organisation`, `skill`, `crew_profile`, `unavailability`. Actions: `org.settings_updated`, `skill.created`, `skill.renamed`, `crew.skill_set`, `crew.skill_removed`, `crew.unavailability_added`, `crew.unavailability_removed`, plus the Spec 02 ones. No-op changes write nothing. The unavailability `note` is kept out of audit payloads.
+- **Audit read:** newest first, paged by `(time, id)`. Filters: `entity=<type>:<id>`, `actor=<userId>|system`, `since` (inclusive) and `until` (exclusive); a bare date is that day's start in UTC.
+- **Settings:** the time zone is valid when the runtime's `Intl` accepts it (UTC offsets such as `+01:00` are refused) and is stored as given. `Intl.supportedValuesOf` is not used: it omits `UTC` and `Asia/Kolkata`. `getOrgSettings(tx)` is exported for the later specs; `todayIn(now, timeZone)` gives "today" in the organisation's time zone.
+- **Catalogue:** names are trimmed with inner whitespace collapsed (max 100); unique per organisation ignoring case; list is paged by id.
+- **Crew listing:** only users whose role is Crew and whose status is `active`. `crew.read` conceals other people's profiles as 404. A Crew Member's list contains only themself. Filters are `skill=<skillId>:<minLevel>` (repeatable, AND) and `available=<from>:<to>` (no overlapping unavailability and no overlapping unreleased hold; the cap is ignored). `load` is the number of unreleased holds.
+- **Unavailability:** a range is rejected when it ends before today in the organisation's time zone (`UNAVAILABILITY_IN_PAST`, 400), overlaps one of the person's own ranges (`UNAVAILABILITY_OVERLAPS_EXISTING`, 409, lists them) or overlaps a live hold (`UNAVAILABILITY_CONFLICTS_WITH_MISSIONS`, 409, lists every blocking mission in full). The crew profile row is locked first, so this serialises with a submission taking holds (§8); migration `0004` adds a database exclusion constraint for the self-overlap rule. `findBlockingMissions` is the single place implementing OQ-1. The `note` is shown only to its owner.
+- **Problem extensions:** problem bodies carry extension members (`missions`, `unavailability`, `errors`); `ProblemDetailsSchema` is a loose object so the CLI keeps them.
+- **API conventions:** forbidden by role → 403; another organisation's or malformed ids → 404; `DELETE` returns 204 (404 when the skill level or range does not exist); creating returns 201; `GET /v1/crew/me` is not an endpoint (the CLI uses the stored user id).
+- **CLI:** `mc profile skill set|remove` and `mc crew list --skill` take skill names, resolved case-insensitively against the catalogue; `--skill` needs the `Name>=N` form. `mc profile show` for a Lead or Director exits 3 (they have no crew profile).
+- **Wiring renames:** `createIdentityServices`/`IdentityHarness` became `createServices`/`Harness`; the API's `identity` dependency is now `services`; `services.auditLog` reads the log while `audit` is the writer. `@mc/db/testing` gained `openAdminDb` for fixtures that bypass RLS.
+- **Grants:** unchanged from Spec 01. `app_tenant` cannot `SELECT … FOR UPDATE` on `unavailability` (no UPDATE privilege), so removal selects then deletes.

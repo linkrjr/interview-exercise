@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import {
   AccessTokenService,
-  createIdentityServices,
+  createServices,
   generateKeyPairPem,
-  noopAuditWriter,
+  DbAuditWriter,
   systemClock,
   type Logger,
 } from '@mc/core';
@@ -33,10 +33,9 @@ const logger: Logger = {
 };
 
 const app = buildApp({
-  identity: createIdentityServices({
+  services: createServices({
     db,
-    // Audit events are not persisted until the database-backed writer arrives (Spec 03).
-    audit: noopAuditWriter,
+    audit: new DbAuditWriter(systemClock),
     clock: systemClock,
     logger,
     accessTokens,
@@ -53,7 +52,6 @@ holder.app = app;
 if (!config.jwtPrivateKey) {
   app.log.warn('No JWT keys configured: using an ephemeral key pair; tokens die on restart');
 }
-app.log.warn('Audit events are not persisted yet (no-op audit writer)');
 
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, 'shutting down');

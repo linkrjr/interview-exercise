@@ -15,6 +15,32 @@ describe('problem details', () => {
     expect(problemFor(new AppError('X', 409))).not.toHaveProperty('detail');
   });
 
+  it('carries extension members such as the blocking missions, but never lets them override the standard ones', () => {
+    const missions = [
+      {
+        id: 'm1',
+        name: 'Artemis',
+        startDate: '2026-11-02',
+        endDate: '2026-11-20',
+        status: 'approved',
+      },
+    ];
+    const body = problemBody(
+      new AppError('UNAVAILABILITY_CONFLICTS_WITH_MISSIONS', 409, 'blocked', {
+        missions,
+        status: 200,
+        code: 'HIJACKED',
+        title: 'Hijacked',
+      }),
+    );
+    expect(body).toMatchObject({
+      status: 409,
+      code: 'UNAVAILABILITY_CONFLICTS_WITH_MISSIONS',
+      title: 'Conflict',
+      missions,
+    });
+  });
+
   it('maps Zod issues to field errors', () => {
     const result = z
       .object({ email: z.email(), nested: z.object({ n: z.number() }) })

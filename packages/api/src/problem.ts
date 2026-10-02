@@ -25,7 +25,17 @@ export function validationError(error: ZodError, what = 'The request is invalid'
   return new AppError(specific ?? ErrorCodes.VALIDATION_FAILED, 400, what, { errors });
 }
 
+const RESERVED = new Set(['type', 'title', 'status', 'code', 'detail']);
+
+/**
+ * The problem body, including the error's extension members (`errors`, and others such as the
+ * `missions` blocking an unavailability range). The standard members cannot be overridden.
+ */
 export function problemBody(error: AppError): ProblemDetails {
-  const extra = error.extra as { errors?: FieldError[] } | undefined;
-  return { ...problemFor(error), ...(extra?.errors ? { errors: extra.errors } : {}) };
+  const extension = Object.fromEntries(
+    Object.entries((error.extra ?? {}) as Record<string, unknown>).filter(
+      ([key]) => !RESERVED.has(key),
+    ),
+  );
+  return { ...extension, ...problemFor(error) } as ProblemDetails;
 }

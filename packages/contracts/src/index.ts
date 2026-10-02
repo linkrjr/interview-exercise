@@ -7,3 +7,8 @@ export * from './platform.js';
 export * from './problem.js';
 export * from './role.js';
 export * from './users.js';
+export * from './audit.js';
+export * from './crew.js';
+export * from './settings.js';
+export * from './skills.js';
+export * from './timezone.js';

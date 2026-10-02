@@ -18,10 +18,3 @@ export class InMemoryAuditWriter implements AuditWriter {
     this.events.length = 0;
   }
 }
-
-/** Discards audit events. Used by the API until the database-backed writer (Spec 03) exists. */
-export const noopAuditWriter: AuditWriter = {
-  async record() {
-    // intentionally empty
-  },
-};

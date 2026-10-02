@@ -1,14 +1,15 @@
 import { AppError, ErrorCodes } from '@mc/contracts';
-import type { AccessTokenService, Clock, IdentityServices } from '@mc/core';
+import type { AccessTokenService, Clock, Services } from '@mc/core';
 import { systemClock } from '@mc/core';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { problemBody, PROBLEM_CONTENT_TYPE } from './problem.js';
 import { authRoutes } from './routes/auth.js';
+import { orgCrewRoutes } from './routes/org-crew.js';
 import { platformRoutes } from './routes/platform.js';
 import { userRoutes } from './routes/users.js';
 
 export interface AppDeps {
-  identity: IdentityServices;
+  services: Services;
   accessTokens: AccessTokenService;
   /** Static credential accepted only on `/v1/platform/*`. */
   operatorToken: string;
@@ -73,6 +74,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   authRoutes(app, deps);
   userRoutes(app, deps);
+  orgCrewRoutes(app, deps);
   platformRoutes(app, deps);
   return app;
 }

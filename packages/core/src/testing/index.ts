@@ -1,11 +1,11 @@
 export {
   TEST_PASSWORD,
   TestClock,
-  createIdentityHarness,
+  createHarness,
   onboardUser,
   provisionOrganisation,
   uniqueEmail,
   type HarnessUrls,
-  type IdentityHarness,
+  type Harness,
   type ProvisionedOrg,
-} from './identity-harness.js';
+} from './harness.js';

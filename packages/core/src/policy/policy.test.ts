@@ -1,7 +1,7 @@
 import type { Actor, Role } from '@mc/contracts';
 import { AppError } from '@mc/contracts';
 import { describe, expect, it } from 'vitest';
-import { createPolicy, identityRules, policy } from './index.js';
+import { createPolicy, identityRules, orgCrewRules, policy } from './index.js';
 
 const ROLES: Role[] = ['director', 'lead', 'crew'];
 const actorWith = (role: Role): Actor => ({ kind: 'user', userId: 'u', orgId: 'o', role });
@@ -85,5 +85,56 @@ describe('createPolicy', () => {
     expect(merged.actions()).toContain('org.settings.update');
     expect(merged.actions()).toContain('user.list');
     expect(() => createPolicy(identityRules, identityRules)).toThrow(/Duplicate policy rule/);
+  });
+});
+
+describe('org and crew role matrix (DESIGN.md §6)', () => {
+  const plain = Object.entries(orgCrewRules).filter(([action]) => action !== 'crew.read');
+  const matrix = plain.flatMap(([action, rule]) =>
+    ROLES.map((role) => ({
+      action,
+      role,
+      expected: (rule.roles as readonly Role[]).includes(role),
+    })),
+  );
+
+  it.each(matrix)('$action as $role is allowed: $expected', ({ action, role, expected }) => {
+    expect(policy.can(actorWith(role), action)).toBe(expected);
+  });
+
+  it('lets everyone read settings and skills, and Directors change them', () => {
+    for (const role of ROLES) {
+      expect(policy.can(actorWith(role), 'org.settings.read')).toBe(true);
+      expect(policy.can(actorWith(role), 'skill.list')).toBe(true);
+    }
+    for (const action of ['org.settings.update', 'skill.create', 'skill.rename', 'audit.read']) {
+      expect(policy.can(actorWith('director'), action)).toBe(true);
+      expect(policy.can(actorWith('lead'), action)).toBe(false);
+      expect(policy.can(actorWith('crew'), action)).toBe(false);
+    }
+  });
+
+  it('restricts own-profile edits to Crew Members', () => {
+    for (const action of ['crew.skill.edit', 'crew.unavailability.edit']) {
+      expect(policy.can(actorWith('crew'), action)).toBe(true);
+      expect(policy.can(actorWith('lead'), action)).toBe(false);
+      expect(policy.can(actorWith('director'), action)).toBe(false);
+    }
+  });
+
+  it('shows every profile to Directors and Leads, but a Crew Member only their own', () => {
+    const crew: Actor = { kind: 'user', userId: 'ann', orgId: 'o', role: 'crew' };
+    expect(policy.can(crew, 'crew.read', { userId: 'ann' })).toBe(true);
+    expect(policy.can(crew, 'crew.read', { userId: 'bob' })).toBe(false);
+    for (const role of ['director', 'lead'] as const) {
+      expect(policy.can(actorWith(role), 'crew.read', { userId: 'bob' })).toBe(true);
+    }
+    expect(policy.can(system, 'crew.read', { userId: 'ann' })).toBe(false);
+  });
+
+  it('is part of the default policy next to the identity rules', () => {
+    expect(policy.actions()).toEqual(
+      expect.arrayContaining([...Object.keys(identityRules), ...Object.keys(orgCrewRules)]),
+    );
   });
 });

@@ -1,91 +1,39 @@
-import { buildApp } from '@mc/api';
-import { createIdentityHarness, uniqueEmail, type IdentityHarness } from '@mc/core/testing';
-import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { uniqueEmail } from '@mc/core/testing';
+import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
+import {
+  Machine,
+  OPERATOR_TOKEN,
+  PASSWORD,
+  startE2e,
+  withPassword,
+  type E2e,
+} from './e2e-support.js';
 
 const urls = inject('dbUrls');
-const MC = fileURLToPath(new URL('../dist/bin/mc.js', import.meta.url));
-const OPERATOR_TOKEN = 'e2e-operator-token-0123456789abcdef0123';
-const PASSWORD = 'a perfectly long password';
-
-let h: IdentityHarness;
-let app: ReturnType<typeof buildApp>;
+let e2e: E2e;
+let h: E2e['h'];
 let apiUrl: string;
 
 beforeAll(async () => {
-  h = await createIdentityHarness(urls);
-  app = buildApp({
-    identity: h,
-    accessTokens: h.accessTokens,
-    operatorToken: OPERATOR_TOKEN,
-    loginRate: { emailMax: 50, ipMax: 100, windowMs: 60_000 },
-    clock: h.clock,
-  });
-  apiUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+  e2e = await startE2e(urls);
+  h = e2e.h;
+  apiUrl = e2e.apiUrl;
 });
 
 afterAll(async () => {
-  await app.close();
-  await h.close();
+  await e2e.stop();
 });
 
-interface Result {
-  code: number;
-  stdout: string;
-  stderr: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  json: any;
-}
-
-/** One person's machine: their own config directory, running the real `mc` binary. */
-class Machine {
-  private constructor(readonly dir: string) {}
-  static async create(): Promise<Machine> {
-    const machine = new Machine(await mkdtemp(join(tmpdir(), 'mc-e2e-')));
-    await machine.run(['config', 'set-url', apiUrl]);
-    return machine;
-  }
-  run(args: string[], env: Record<string, string> = {}, stdin?: string): Promise<Result> {
-    return new Promise((resolve) => {
-      const child = execFile(
-        process.execPath,
-        [MC, ...args],
-        { env: { PATH: process.env.PATH, MC_CONFIG_DIR: this.dir, ...env }, timeout: 30_000 },
-        (error, stdout, stderr) => {
-          let json: unknown;
-          try {
-            json = JSON.parse(stdout);
-          } catch {
-            json = undefined;
-          }
-          resolve({
-            code: error ? ((error as { code?: number }).code ?? 1) : 0,
-            stdout,
-            stderr,
-            json,
-          });
-        },
-      );
-      child.stdin?.end(stdin ?? '');
-    });
-  }
-  async credentials() {
-    return JSON.parse(await readFile(join(this.dir, 'credentials.json'), 'utf8'));
-  }
-}
-
-const withPassword = { MC_PASSWORD: PASSWORD };
+const machine = () => Machine.create(apiUrl);
 
 describe('operator → Director → Lead → Crew onboarding, through the real mc binary', () => {
   it('works end to end', async () => {
-    const operator = await Machine.create();
-    const director = await Machine.create();
-    const lead = await Machine.create();
-    const crew = await Machine.create();
+    const operator = await machine();
+    const director = await machine();
+    const lead = await machine();
+    const crew = await machine();
     const directorEmail = uniqueEmail('director');
 
     // 1. The operator creates the organisation. No organisation, no sign-in needed.
@@ -212,8 +160,8 @@ describe('operator → Director → Lead → Crew onboarding, through the real m
   });
 
   it('maps failures to the documented exit codes', async () => {
-    const operator = await Machine.create();
-    const director = await Machine.create();
+    const operator = await machine();
+    const director = await machine();
     const email = uniqueEmail('director');
     const created = await operator.run(
       ['--json', 'platform', 'org', 'create', '--name', 'Codes', '--director-email', email],
@@ -263,7 +211,7 @@ describe('operator → Director → Lead → Crew onboarding, through the real m
     ).toBe(1);
     expect((await director.run(['users', 'frobnicate'])).code).toBe(1);
 
-    const wrong = await Machine.create();
+    const wrong = await machine();
     expect(
       (
         await wrong.run(['auth', 'login', '--org', organisationId, '--email', email], {
@@ -271,7 +219,7 @@ describe('operator → Director → Lead → Crew onboarding, through the real m
         })
       ).code,
     ).toBe(2);
-    const down = await Machine.create();
+    const down = await machine();
     await down.run(['config', 'set-url', 'http://127.0.0.1:1']);
     expect(
       (await down.run(['auth', 'login', '--org', organisationId, '--email', email], withPassword))
@@ -280,9 +228,9 @@ describe('operator → Director → Lead → Crew onboarding, through the real m
   });
 
   it('recovers from an expired invite with re-issue, for the operator and for a Director', async () => {
-    const operator = await Machine.create();
-    const director = await Machine.create();
-    const fresh = await Machine.create();
+    const operator = await machine();
+    const director = await machine();
+    const fresh = await machine();
     const created = await operator.run(
       [
         '--json',

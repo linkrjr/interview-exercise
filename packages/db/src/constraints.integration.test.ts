@@ -313,3 +313,31 @@ describe('updated_at', () => {
     });
   });
 });
+
+describe('unavailability self-overlap', () => {
+  const range = (c: { query: Pool['query'] }, crew: string, from: string, to: string) =>
+    c.query(
+      `INSERT INTO unavailability (id, org_id, crew_member_id, period)
+       SELECT $1, org_id, user_id, daterange($3::date, $4::date, '[]') FROM crew_profiles WHERE user_id = $2`,
+      [newId(), crew, from, to],
+    );
+
+  it('rejects overlapping ranges for one crew member, including a single shared day', async () => {
+    // Seeded range: 2030-01-01..2030-01-10 inclusive.
+    for (const [from, to] of [
+      ['2030-01-05', '2030-01-20'],
+      ['2030-01-10', '2030-01-12'],
+      ['2029-12-01', '2030-01-01'],
+    ] as const) {
+      const error = await failure(range(superuser, a.crewId, from, to));
+      expect(error.code, `${from}..${to}`).toBe(EXCLUSION);
+    }
+  });
+
+  it('allows adjacent ranges (and, as the seeded tenants show, the same dates for other crew members)', async () => {
+    await rolledBack(superuser, null, async (c) => {
+      await range(c, a.crewId, '2030-01-11', '2030-01-15');
+      await range(c, a.crewId, '2029-12-25', '2029-12-31');
+    });
+  });
+});

@@ -5,12 +5,16 @@ import type { Clock } from './clock.js';
 import { PasswordHasher } from './crypto/passwords.js';
 import type { Logger } from './logger.js';
 import { policy as defaultPolicy, type Policy } from './policy/index.js';
+import { AuditService } from './services/audit-service.js';
 import { AuthService } from './services/auth-service.js';
+import { CrewService } from './services/crew-service.js';
+import { OrgSettingsService } from './services/org-settings-service.js';
+import { SkillService } from './services/skill-service.js';
 import type { UserChangeGuard } from './services/guards.js';
 import { PlatformService } from './services/platform-service.js';
 import { UserService } from './services/user-service.js';
 
-export interface IdentityConfig {
+export interface ServicesConfig {
   db: Db;
   audit: AuditWriter;
   clock: Clock;
@@ -21,15 +25,20 @@ export interface IdentityConfig {
   guards?: readonly UserChangeGuard[];
 }
 
-export interface IdentityServices {
+export interface Services {
   auth: AuthService;
   users: UserService;
   platform: PlatformService;
+  settings: OrgSettingsService;
+  skills: SkillService;
+  crew: CrewService;
+  /** Reads the audit log (the `audit` writer is a different thing: it records events). */
+  auditLog: AuditService;
   policy: Policy;
 }
 
 /** Wires the identity services together; the API and the tests both build them this way. */
-export function createIdentityServices(config: IdentityConfig): IdentityServices {
+export function createServices(config: ServicesConfig): Services {
   const hasher = config.hasher ?? new PasswordHasher();
   const policy = config.policy ?? defaultPolicy;
   return {
@@ -43,5 +52,9 @@ export function createIdentityServices(config: IdentityConfig): IdentityServices
       guards: config.guards,
     }),
     platform: new PlatformService({ db: config.db, clock: config.clock }),
+    settings: new OrgSettingsService({ db: config.db, audit: config.audit, policy }),
+    skills: new SkillService({ db: config.db, audit: config.audit, clock: config.clock, policy }),
+    crew: new CrewService({ db: config.db, audit: config.audit, clock: config.clock, policy }),
+    auditLog: new AuditService({ db: config.db, policy }),
   };
 }

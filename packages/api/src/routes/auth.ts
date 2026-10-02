@@ -12,7 +12,7 @@ import { validationError } from '../problem.js';
 import { SlidingWindowLimiter } from '../rate-limit.js';
 
 export function authRoutes(app: FastifyInstance, deps: AppDeps): void {
-  const { identity, loginRate, clock } = deps;
+  const { services, loginRate, clock } = deps;
   const byEmail = new SlidingWindowLimiter(loginRate.emailMax, loginRate.windowMs, clock);
   const byIp = new SlidingWindowLimiter(loginRate.ipMax, loginRate.windowMs, clock);
 
@@ -30,25 +30,25 @@ export function authRoutes(app: FastifyInstance, deps: AppDeps): void {
         retryAfterSeconds: retryAfter,
       });
     }
-    return identity.auth.login(parsed.data);
+    return services.auth.login(parsed.data);
   });
 
   app.post('/v1/auth/refresh', async (request) => {
     const parsed = RefreshRequestSchema.safeParse(request.body);
     if (!parsed.success) throw validationError(parsed.error);
-    return identity.auth.refresh(parsed.data.refreshToken);
+    return services.auth.refresh(parsed.data.refreshToken);
   });
 
   app.post('/v1/auth/logout', async (request, reply) => {
     const parsed = LogoutRequestSchema.safeParse(request.body);
     if (!parsed.success) throw validationError(parsed.error);
-    await identity.auth.logout(parsed.data.refreshToken);
+    await services.auth.logout(parsed.data.refreshToken);
     return reply.code(204).send();
   });
 
   app.post('/v1/auth/accept-invite', async (request) => {
     const parsed = AcceptInviteRequestSchema.safeParse(request.body);
     if (!parsed.success) throw validationError(parsed.error);
-    return identity.auth.acceptInvite(parsed.data);
+    return services.auth.acceptInvite(parsed.data);
   });
 }

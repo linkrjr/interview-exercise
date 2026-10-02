@@ -5,22 +5,22 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { INVITE_TTL_MS } from './invites.js';
 import {
   TEST_PASSWORD,
-  createIdentityHarness,
+  createHarness,
   onboardUser,
   provisionOrganisation,
   uniqueEmail,
-  type IdentityHarness,
+  type Harness,
   type ProvisionedOrg,
 } from '../testing/index.js';
 import type { UserChange } from './guards.js';
 
 const urls = inject('dbUrls');
-let h: IdentityHarness;
+let h: Harness;
 let org: ProvisionedOrg;
 let other: ProvisionedOrg;
 
 beforeAll(async () => {
-  h = await createIdentityHarness(urls);
+  h = await createHarness(urls);
   org = await provisionOrganisation(h, 'Org A');
   other = await provisionOrganisation(h, 'Org B');
 });
@@ -368,7 +368,7 @@ describe('update: last active Director guard (OQ-4)', () => {
 describe('update: guard extension point', () => {
   it('runs every registered guard and lets one block the change', async () => {
     const seen: UserChange['kind'][] = [];
-    const guarded = await createIdentityHarness(urls, {
+    const guarded = await createHarness(urls, {
       guards: [
         async (_tx, change) => {
           seen.push(change.kind);

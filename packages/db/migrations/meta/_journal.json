@@ -29,6 +29,13 @@
       "when": 1790923644560,
       "tag": "0003_users_name_set_at_accept_invite",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790926542347,
+      "tag": "0004_unavailability_no_self_overlap",
+      "breakpoints": true
     }
   ]
 }

@@ -6,21 +6,21 @@ import { INVITE_TTL_MS } from './invites.js';
 import { REFRESH_TOKEN_TTL_MS } from './sessions.js';
 import {
   TEST_PASSWORD,
-  createIdentityHarness,
+  createHarness,
   onboardUser,
   provisionOrganisation,
   uniqueEmail,
-  type IdentityHarness,
+  type Harness,
   type ProvisionedOrg,
 } from '../testing/index.js';
 
 const urls = inject('dbUrls');
-let h: IdentityHarness;
+let h: Harness;
 let org: ProvisionedOrg;
 let other: ProvisionedOrg;
 
 beforeAll(async () => {
-  h = await createIdentityHarness(urls);
+  h = await createHarness(urls);
   org = await provisionOrganisation(h, 'Org A');
   other = await provisionOrganisation(h, 'Org B');
 });
@@ -153,7 +153,7 @@ describe('accept-invite', () => {
       hashes++;
       return original(password);
     };
-    const counted = await createIdentityHarness(urls, { hasher });
+    const counted = await createHarness(urls, { hasher });
     try {
       const o = await provisionOrganisation(counted, 'Counted');
       hashes = 0; // the first Director's own acceptance does hash
@@ -290,7 +290,7 @@ describe('login', () => {
 
   it('logs failures without the email', async () => {
     const warnings: object[] = [];
-    const logged = await createIdentityHarness(urls, {
+    const logged = await createHarness(urls, {
       logger: { info: () => undefined, warn: (o) => warnings.push(o) },
     });
     try {

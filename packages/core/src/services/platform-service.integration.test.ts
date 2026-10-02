@@ -1,23 +1,27 @@
 import { newId, schema } from '@mc/db';
+import { openAdminDb, type AdminDb } from '@mc/db/testing';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import {
   TEST_PASSWORD,
-  createIdentityHarness,
+  createHarness,
   onboardUser,
   provisionOrganisation,
   uniqueEmail,
-  type IdentityHarness,
+  type Harness,
 } from '../testing/index.js';
 
 const urls = inject('dbUrls');
-let h: IdentityHarness;
+let h: Harness;
+let admin: AdminDb;
 
 beforeAll(async () => {
-  h = await createIdentityHarness(urls);
+  h = await createHarness(urls);
+  admin = openAdminDb(urls.migrator);
 });
 
 afterAll(async () => {
   await h.close();
+  await admin.end();
 });
 
 const organisationIds = () =>
@@ -66,14 +70,19 @@ describe('createOrganisation', () => {
 
   it('rejects an email already registered anywhere and creates no organisation', async () => {
     const existing = await provisionOrganisation(h, 'Existing');
-    const before = await organisationIds();
+    // A unique name identifies the attempted organisation even while other test files add their own.
+    const name = `Dup ${newId()}`;
     await expect(
       h.platform.createOrganisation({
-        name: 'Dup',
+        name,
         directorEmail: existing.director.email.toUpperCase(),
       }),
     ).rejects.toMatchObject({ code: 'EMAIL_ALREADY_REGISTERED', status: 409 });
-    expect(await organisationIds()).toEqual(before);
+    const { rows } = await admin.query(
+      'SELECT count(*)::int AS n FROM organisations WHERE name = $1',
+      [name],
+    );
+    expect(rows[0].n).toBe(0);
   });
 
   it('gives each organisation its own isolated users', async () => {

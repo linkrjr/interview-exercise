@@ -77,7 +77,9 @@ These were confirmed with the product owner and are binding for implementation.
 | Visibility | Directors see everything in their organisation. Leads see all missions and all crew profiles. Crew Members see only their own profile and their own assignments |
 | Matcher objective | Propose the best whole team at once (not seat by seat), subject to hard constraints, favouring balanced workload |
 | Infeasible matches | Return the best partial team plus each unmet requirement and why it could not be met |
-| Audit | All state changes (lifecycle, assignments, roles, settings, profiles) are audited; Directors can read the log |
+| Audit | All state changes (lifecycle, assignments, roles, settings, profiles) are audited; Directors can read the log, newest first. Bare dates in its filters are UTC days (`since` inclusive, `until` exclusive) |
+| Unavailability | A range that ends in the past (organisation time zone) is rejected, and so is one that overlaps another of the same person's ranges. The `note` is private to its owner: Directors and Leads see the ranges only, and the audit log never contains it |
+| Crew search | "Available" for a window means no overlapping unavailability and no overlapping live hold; the workload cap is not considered. Only active Crew Members are listed |
 
 ---
 
@@ -87,7 +89,7 @@ These were not covered by the decisions above. Each has a **proposed default** t
 
 | ID | Question | Proposed default |
 |---|---|---|
-| OQ-1 | Can a crew member add an unavailable range that overlaps a mission they are held on (Pending approval, Approved or Active)? | **No.** The API rejects it with a conflict listing the missions. The crew member must speak to the Lead, who can withdraw/re-crew a pending mission or cancel an approved one |
+| OQ-1 | Can a crew member add an unavailable range that overlaps a mission they are held on (Pending approval, Approved or Active)? | **No.** The API rejects it with a conflict listing every conflicting mission in full (id, name, dates, status), including ones still Pending approval. The crew member must speak to the Lead, who can withdraw/re-crew a pending mission or cancel an approved one |
 | OQ-2 | What is the default maximum number of upcoming missions per crew member? | **3**, configurable per organisation by a Director (range 1–20) |
 | OQ-3 | Can a crew member see who else is on their missions? | **No.** Crew see mission name, description, dates and their own assignment only |
 | OQ-4 | Can a user be deactivated while they hold commitments? | Crew Members: **no**, not while they have holds. Mission Leads: **no**, not while they own missions that are not Completed or Cancelled (ownership transfer is out of scope). Directors: **no** if they are the last active Director |
@@ -464,12 +466,12 @@ Conventions:
 | `POST /v1/platform/organisations` | operator | Create org + first Director (returns invite code) |
 | `POST /v1/auth/login`, `/refresh`, `/logout`, `/accept-invite` | anyone | Session management |
 | `GET /v1/me` | all | Current user, role, org |
-| `GET/PATCH /v1/org/settings` | Director (read: all) | Time zone, workload cap |
+| `GET/PATCH /v1/org/settings` | Director (read: all) | Time zone (any IANA name the runtime knows, stored as given), workload cap (1–20) |
 | `GET/POST /v1/users`, `PATCH /v1/users/{id}`, `POST /v1/users/{id}/invites` | Director | Invite, change role, deactivate, re-issue an invite |
 | `GET/POST /v1/skills`, `PATCH /v1/skills/{id}` | Director (read: all) | Skill catalogue (add, list, rename [OQ-11]; no archive or delete) |
-| `GET /v1/crew`, `GET /v1/crew/{id}` | Director, Lead; crew: self | Crew profiles with skills, unavailability, load |
-| `PUT/DELETE /v1/crew/me/skills/{skillId}` | Crew | Set/remove own skill level |
-| `POST/DELETE /v1/crew/me/unavailability[/{id}]` | Crew | Manage own unavailable ranges |
+| `GET /v1/crew`, `GET /v1/crew/{id}` | Director, Lead; crew: self | Active Crew Members with skills, unavailability and load. Filters: `skill=<skillId>:<minLevel>` (repeatable, all must hold) and `available=<from>:<to>`. A Crew Member gets only themself; anyone else's id is a 404 |
+| `PUT/DELETE /v1/crew/me/skills/{skillId}` | Crew | Set/remove own skill level (`DELETE` of a level never set is a 404) |
+| `POST/DELETE /v1/crew/me/unavailability[/{id}]` | Crew | Manage own unavailable ranges. Conflicts return 409 with `UNAVAILABILITY_CONFLICTS_WITH_MISSIONS` (and a `missions` list) or `UNAVAILABILITY_OVERLAPS_EXISTING` (and an `unavailability` list) |
 | `GET /v1/missions`, `GET /v1/missions/{id}` | per visibility rules | List/filter by status, lead, dates |
 | `POST /v1/missions`, `PATCH /v1/missions/{id}` | Lead / owner | Create, edit |
 | `PUT /v1/missions/{id}/requirements` | owner | Replace requirement set |
@@ -479,7 +481,7 @@ Conventions:
 | `POST /v1/missions/{id}/transitions` | per transition | Body `{ "action": "start_crewing" \| "reopen" \| "submit" \| "withdraw" \| "approve" \| "reject" \| "cancel", "comment"?: … }` |
 | `GET /v1/assignments/me`, `POST /v1/assignments/{id}/acknowledge` | Crew | Own assignments, acknowledge |
 | `GET /v1/notifications`, `POST /v1/notifications/{id}/read` | all | Inbox |
-| `GET /v1/audit` | Director | Filter by entity, actor, time |
+| `GET /v1/audit` | Director | Newest first. Filters: `entity=<type>:<id>`, `actor=<userId>\|system`, `since`, `until` (ISO date or timestamp) |
 | `GET /v1/alerts` | Director | Scheduler alerts for the organisation, filter by time (§16.1) |
 
 A test-only endpoint exists that runs one scheduler pass as if "today" were a supplied date, so the e2e suite can advance time (§19). It is registered only in non-production builds, is not part of the OpenAPI document, and is not part of the public API.
@@ -507,7 +509,7 @@ mc skills add "Orbital Piloting" | list | rename <id> "<new name>"
 mc approvals list                      # missions pending approval
 mc missions approve <id> [--comment]
 mc missions reject <id> --reason "…"
-mc audit list [--entity mission:<id>] [--since 2026-09-01]
+mc audit list [--entity mission:<id>] [--actor <id>] [--since 2026-09-01] [--until 2026-10-01]
 mc alerts [--since 2026-09-01]         # scheduler alerts for the organisation
 
 # Mission Lead
@@ -548,7 +550,7 @@ All tenant tables have `org_id uuid NOT NULL`, `created_at`, `updated_at`, RLS e
 | `crew_profiles` | `user_id` (PK, FK users), `org_id`; created when a Crew Member is invited, kept (dormant) if the user later changes role |
 | `skills` | `id`, `org_id`, `name` (unique per org, case-insensitive) |
 | `crew_skills` | `org_id`, `crew_member_id`, `skill_id`, `level` smallint CHECK 1–5; PK (crew_member_id, skill_id) |
-| `unavailability` | `id`, `org_id`, `crew_member_id`, `period` daterange, `note` |
+| `unavailability` | `id`, `org_id`, `crew_member_id`, `period` daterange, `note`; a crew member's ranges never overlap (exclusion constraint) |
 | `missions` | `id`, `org_id`, `lead_id`, `name`, `description`, `start_date`, `end_date`, `status` enum, `version` int |
 | `requirements` | `id`, `org_id`, `mission_id`, `skill_id`, `min_level` 1–5, `count` ≥1; unique (mission_id, skill_id) |
 | `assignments` | `id`, `org_id`, `mission_id`, `crew_member_id`, `assigned_by`, `acknowledged_at`; unique (mission_id, crew_member_id) |

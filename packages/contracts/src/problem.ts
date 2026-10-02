@@ -7,8 +7,11 @@ export const FieldErrorSchema = z.object({
 });
 export type FieldError = z.infer<typeof FieldErrorSchema>;
 
-/** RFC 9457 `application/problem+json` body with a stable `code`. */
-export const ProblemDetailsSchema = z.object({
+/**
+ * RFC 9457 `application/problem+json` body with a stable `code`. Problems may carry extension
+ * members (e.g. the missions that block an unavailability range), so unknown keys are kept.
+ */
+export const ProblemDetailsSchema = z.looseObject({
   type: z.string(),
   title: z.string(),
   status: z.number().int().min(400).max(599),

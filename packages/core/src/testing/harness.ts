@@ -4,10 +4,22 @@ import { generateKeyPairPem, AccessTokenService } from '../auth/access-tokens.js
 import type { Actor } from '@mc/contracts';
 import type { Clock } from '../clock.js';
 import type { PasswordHasher } from '../crypto/passwords.js';
+import type { AuditWriter } from '../audit.js';
+import { DbAuditWriter } from '../audit/db-audit-writer.js';
 import { InMemoryAuditWriter } from '../in-memory-audit-writer.js';
-import { createIdentityServices, type IdentityServices } from '../identity.js';
+import { createServices, type Services } from '../services.js';
 import { silentLogger, type Logger } from '../logger.js';
 import type { UserChangeGuard } from '../services/guards.js';
+
+/** Records every event in memory (for assertions) and also writes it with the real writer. */
+function tee(memory: InMemoryAuditWriter, real: AuditWriter): AuditWriter {
+  return {
+    async record(tx, event) {
+      await memory.record(tx, event);
+      await real.record(tx, event);
+    },
+  };
+}
 
 export const TEST_PASSWORD = 'correct horse battery staple';
 
@@ -22,7 +34,7 @@ export class TestClock implements Clock {
   }
 }
 
-export interface IdentityHarness extends IdentityServices {
+export interface Harness extends Services {
   db: Db;
   audit: InMemoryAuditWriter;
   clock: TestClock;
@@ -36,10 +48,16 @@ export interface HarnessUrls {
   scheduler: string;
 }
 
-export async function createIdentityHarness(
+export async function createHarness(
   urls: HarnessUrls,
-  options: { logger?: Logger; guards?: readonly UserChangeGuard[]; hasher?: PasswordHasher } = {},
-): Promise<IdentityHarness> {
+  options: {
+    logger?: Logger;
+    guards?: readonly UserChangeGuard[];
+    hasher?: PasswordHasher;
+    /** Also persist audit events to `audit_events` (they are always kept in `harness.audit`). */
+    dbAudit?: boolean;
+  } = {},
+): Promise<Harness> {
   const db = createDb({
     tenantUrl: urls.tenant,
     platformUrl: urls.platform,
@@ -48,10 +66,11 @@ export async function createIdentityHarness(
   });
   const clock = new TestClock();
   const audit = new InMemoryAuditWriter();
+  const writer: AuditWriter = options.dbAudit ? tee(audit, new DbAuditWriter(clock)) : audit;
   const accessTokens = await AccessTokenService.create({ ...(await generateKeyPairPem()), clock });
-  const services = createIdentityServices({
+  const services = createServices({
     db,
-    audit,
+    audit: writer,
     clock,
     accessTokens,
     logger: options.logger ?? silentLogger,
@@ -70,7 +89,7 @@ export interface ProvisionedOrg {
 
 /** Creates an organisation as the operator and activates its first Director, as the CLI flow does. */
 export async function provisionOrganisation(
-  h: Pick<IdentityHarness, 'platform' | 'auth'>,
+  h: Pick<Harness, 'platform' | 'auth'>,
   name = 'Lunar Research Lab',
 ): Promise<ProvisionedOrg> {
   const email = uniqueEmail('director');
@@ -98,10 +117,10 @@ export async function provisionOrganisation(
 
 /** Invites a user as the given Director and activates them. */
 export async function onboardUser(
-  h: Pick<IdentityHarness, 'users' | 'auth'>,
+  h: Pick<Harness, 'users' | 'auth'>,
   org: ProvisionedOrg,
   role: 'director' | 'lead' | 'crew',
-  label = role,
+  label: string = role,
 ) {
   const email = uniqueEmail(label);
   const invited = await h.users.invite(org.director.actor, { email, role });
