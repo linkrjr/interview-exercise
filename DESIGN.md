@@ -58,7 +58,10 @@ These were confirmed with the product owner and are binding for implementation.
 | Approval | One Director approval, same rule in every organisation. Directors do not create or lead missions, so a Lead can never approve their own mission |
 | Skills | Each organisation defines its own skill catalogue. Crew hold skills at a proficiency level 1–5 |
 | Skill levels | Self-declared by crew members and used by the matcher as-is |
-| Requirements | A mission has a crew size plus skill requirements of the form "N people with skill S at level ≥ L". One person may satisfy several requirements |
+| Requirements | A mission has one or more skill requirements of the form "N people with skill S at level ≥ L". One person may satisfy several requirements. There is no separate crew size: the team is whatever set of people fulfils the requirements |
+| Role changes | A Crew Member can be changed to Lead or Director; nobody can ever become a Crew Member (Crew Members are created only by invitation with the Crew role). The same blocking conditions as deactivation apply (OQ-4). A former Crew Member's profile and its data are kept but dormant: not listed, not matchable |
+| Scheduler failures | A failure while processing one organisation is logged, raised as an alert (§16.1) and the scheduler continues with the next organisation |
+| Clock override (tests) | A test-only endpoint, absent from production builds (§19) |
 | Time model | Whole days (dates only) |
 | Availability | Crew are available by default. Crew members add and remove their own unavailable date ranges |
 | Workload | Measured as the number of upcoming missions a person is committed to, against an organisation-set maximum |
@@ -90,9 +93,11 @@ These were not covered by the decisions above. Each has a **proposed default** t
 | OQ-4 | Can a user be deactivated while they hold commitments? | Crew Members: **no**, not while they have holds. Mission Leads: **no**, not while they own missions that are not Completed or Cancelled (ownership transfer is out of scope). Directors: **no** if they are the last active Director |
 | OQ-5 | Can a crew member edit their skill levels while held on a mission? | **Yes.** Levels only affect future matching; existing assignments are not re-evaluated |
 | OQ-6 | Can a Lead withdraw a mission from Pending approval back to Crewing without a Director decision? | **Yes**, releasing holds, audited |
-| OQ-7 | Who manages the skill catalogue? | **Directors** (it is an organisation setting). Skills in use are archived rather than deleted |
+| OQ-7 | Who manages the skill catalogue? | **Directors** (it is an organisation setting). Skills cannot be archived or deleted in the core (archiving is future work, §22) |
 | OQ-8 | When are crew notified of an assignment? | **On approval**, since crew cannot see assignments before then. Also notified if an approved mission they are on is cancelled |
 | OQ-9 | In which time zone do date-based transitions happen? | The organisation's configured IANA time zone (default `UTC`), set by a Director |
+| OQ-10 | Who can read alerts (§16.1)? | Alerts are tenant-scoped (they carry an `org_id`) and are read by the **Directors of that organisation**. There is no platform-wide alert view |
+| OQ-11 | Can a skill be renamed, now that it cannot be archived? | **Yes.** Directors may rename a skill; names stay unique per organisation, case-insensitively, and the skill ID is the stable key |
 
 ---
 
@@ -102,11 +107,11 @@ These were not covered by the decisions above. Each has a **proposed default** t
 
 - **Organisation** — the tenant. Has settings: time zone, max upcoming missions per crew member.
 - **User** — belongs to one organisation, has one role, logs in with email and password. Email is unique across the platform (possible because users belong to one organisation), so login needs no organisation identifier.
-- **Crew profile** — every Crew Member user has exactly one. Holds skills and unavailability. Only Crew Member users are assignable to missions.
-- **Skill** — an entry in the organisation's catalogue (e.g. "Orbital Piloting"). Can be archived.
+- **Crew profile** — every Crew Member user has exactly one, created when they are invited. Holds skills and unavailability. Only active Crew Member users are assignable to missions. If the user later changes role, the profile is kept but dormant.
+- **Skill** — an entry in the organisation's catalogue (e.g. "Orbital Piloting"). Cannot be archived or deleted in the core.
 - **Crew skill** — (crew member, skill, level 1–5).
 - **Unavailability** — an inclusive date range during which a crew member cannot be assigned.
-- **Mission** — owned by one Mission Lead. Has name, description, start and end date (inclusive), crew size, requirements, status.
+- **Mission** — owned by one Mission Lead. Has name, description, start and end date (inclusive), requirements, status.
 - **Requirement** — (skill, minimum level, count). "At least *count* distinct team members have *skill* at ≥ *minimum level*."
 - **Assignment** — a crew member on a mission. Tentative while the mission is Draft/Crewing; a **hold** from Pending approval onward.
 - **Hold** — the database record of a binding commitment. Enforces no-overlap and feeds the workload count.
@@ -120,8 +125,8 @@ These must hold at all times and are the basis of the test plan.
 
 1. Every tenant-scoped row has an `org_id`, and every foreign key between tenant rows stays within one organisation.
 2. A mission's end date ≥ start date.
-3. `crew_size` ≥ 1 always. From Crewing onward, the mission is expected to have `crew_size` ≥ the largest `count` among its requirements (one person can cover several requirements, so the sum may exceed crew size). This is not rejected on edit in Crewing: as in §7.1, a change that breaks it is flagged in the response. It is enforced at **submit** (§7.2), which requires exactly `crew_size` assignees satisfying every requirement.
-4. A mission in Pending approval, Approved or Active has exactly `crew_size` assignments that satisfy every requirement.
+3. A mission has at least one requirement from Crewing onward (enforced when crewing starts), and every requirement has `count` ≥ 1 and a level 1–5.
+4. A mission in Pending approval, Approved or Active has at least one assignment, and its assignees satisfy every requirement. There is no upper or exact limit on the number of assignees.
 5. No crew member has two holds with overlapping date ranges.
 6. No crew member has more active holds than the organisation's cap at the time the holds were taken. Lowering the cap later does not release existing holds; it applies to new submissions only.
 7. A crew member has no unavailability overlapping any of their holds [OQ-1].
@@ -169,6 +174,7 @@ erDiagram
 | Acknowledge assignment | | | own | |
 | Read own notifications | ✓ | ✓ | ✓ | |
 | Read audit log | ✓ | | | |
+| Read alerts [OQ-10] | ✓ | | | |
 
 The platform operator is **not** an organisation role and is not a member of any organisation: it simply onboards organisations. It has no `orgId`, authenticates with a separate operator credential, can only call the provisioning endpoints (which take no tenant context), and cannot read tenant data.
 
@@ -200,24 +206,38 @@ stateDiagram-v2
 
 | State | Meaning | Editable | Crew |
 |---|---|---|---|
-| **Draft** | Lead is defining details and requirements | Details, dates, crew size, requirements | None |
-| **Crewing** | Lead is assembling the team, manually or with the matcher | Details, dates, crew size, requirements, crew | Tentative |
+| **Draft** | Lead is defining details and requirements | Details, dates, requirements | None |
+| **Crewing** | Lead is assembling the team, manually or with the matcher | Details, dates, requirements, crew | Tentative |
 | **Pending approval** | Awaiting a Director's decision | Nothing | Held |
 | **Approved** | Approved, not yet started. Locked | Nothing | Held |
 | **Active** | Between start and end date | Nothing | Held |
 | **Completed** | Past end date (terminal) | Nothing | Historical |
 | **Cancelled** | Cancelled by the owning Lead (terminal) | Nothing | Released |
 
-Draft and Crewing are separate so that requirements are settled before anyone is attached; moving back to Draft clears tentative assignments. Editing details in Crewing is allowed, but changing dates, crew size or requirements re-validates the existing tentative crew and flags now-invalid assignments in the response (it does not silently remove them).
+Draft and Crewing are separate so that requirements are settled before anyone is attached; moving back to Draft clears tentative assignments. Editing details in Crewing is allowed, and changing dates or requirements never removes or blocks anything: the existing tentative crew is kept and its validity is reported. **Every read of a Crewing mission** (`GET`, and the response of any mutation) includes a `crewValidation` block, computed by one function:
+
+```jsonc
+"crewValidation": {
+  "valid": false,
+  "assignmentIssues": [
+    { "assignmentId": "…", "crewMemberId": "…", "code": "NOT_ELIGIBLE" }
+  ],
+  "unmetRequirements": [
+    { "skillId": "…", "minLevel": 3, "required": 2, "met": 1 }
+  ]
+}
+```
+
+An assignment is `NOT_ELIGIBLE` when the person overlaps an unavailability range or another hold, is at the workload cap, or is no longer an active Crew Member. The code is deliberately generic, so the reason a named person is blocked is not exposed (the same principle as §9.4). `valid` is true only when there are no issues and no unmet requirements. Only **submit** (§7.2) is blocked by an invalid crew.
 
 ### 7.2 Transitions
 
 | Transition | Actor | Guards | Effects |
 |---|---|---|---|
 | create | Lead | valid details | status Draft; owner = actor |
-| start crewing | owner | ≥1 requirement or crew size set; start date ≥ today (org TZ) | Crewing |
+| start crewing | owner | ≥1 requirement; start date ≥ today (org TZ) | Crewing |
 | reopen | owner | Crewing | Draft; tentative assignments removed |
-| submit | owner | Crewing; start date ≥ today; exactly `crew_size` assignees; all requirements satisfied; for every assignee: no overlapping unavailability, no overlapping hold, under workload cap | Pending approval; holds created atomically; Directors notified |
+| submit | owner | Crewing; start date ≥ today; ≥1 assignee; all requirements satisfied; for every assignee: no overlapping unavailability, no overlapping hold, under workload cap | Pending approval; holds created atomically; Directors notified |
 | approve | any Director | Pending approval | Approved; decision recorded; owner and crew notified [OQ-8] |
 | reject | any Director | Pending approval; non-empty reason | Crewing; holds released; decision recorded; owner notified |
 | withdraw [OQ-6] | owner | Pending approval | Crewing; holds released |
@@ -263,7 +283,7 @@ The workload cap is checked inside the submit transaction after taking `SELECT �
 
 ### 9.1 What it does
 
-Given a mission in Crewing, the matcher proposes a complete team of `crew_size` people that satisfies all requirements, respects every hard constraint, and spreads load fairly. It is **advisory**: it returns a proposal, and the Lead applies it (optionally after edits). The Lead can **pin** people who must be on the team and **exclude** people who must not.
+Given a mission in Crewing, the matcher proposes a team that satisfies all requirements, respects every hard constraint, and spreads load fairly. There is no target team size: the team is the set of people needed to fulfil the requirements. It is **advisory**: it returns a proposal, and the Lead applies it (optionally after edits). The Lead can **exclude** people who must not be on the team. Leads cannot pin (force) anyone onto the team through the matcher; people the Lead wants unconditionally are added by hand with `PUT /v1/missions/{id}/crew`.
 
 ### 9.2 Hard constraints (candidate filtering)
 
@@ -279,23 +299,21 @@ A crew member is a candidate only if all of these hold. Each rejection is record
 
 ### 9.3 Optimisation model
 
-The team problem is a small **set multi-cover with a cardinality constraint**, which is NP-hard in general but tiny in practice (crew sizes of a handful, candidates in the hundreds). It is solved exactly as an integer linear program with the HiGHS solver (WebAssembly build, runs in-process).
+The team problem is a small **set multi-cover**, which is NP-hard in general but tiny in practice (teams of a handful, candidates in the hundreds). It is solved exactly as an integer linear program with the HiGHS solver (WebAssembly build, runs in-process).
 
 Variables:
 
-- `x_i ∈ {0,1}` — candidate *i* is on the team (`x_i = 1` fixed for pinned people)
+- `x_i ∈ {0,1}` — candidate *i* is on the team
 - `u_r ≥ 0` — unmet count for requirement *r*
-- `s ≥ 0` — unfilled seats
 
 Constraints:
 
-- `Σ_i x_i + s = crew_size`
 - for each requirement *r*: `Σ_{i qualifies for r} x_i + u_r ≥ count_r`
 
 Objective, solved **lexicographically** in three passes (each pass fixes the previous optimum as a constraint), so no tuning of large weights is needed and priorities are exact:
 
-1. **Coverage** — minimise `Σ u_r + s`. Meet every requirement if at all possible.
-2. **Workload balance** — minimise `Σ_i x_i · w_i` where `w_i = (load_i + 1)² ` and `load_i` is the person's current upcoming missions. The convex cost prefers spreading work over repeatedly picking the same people.
+1. **Coverage** — minimise `Σ u_r`. Meet every requirement if at all possible.
+2. **Workload balance** — minimise `Σ_i x_i · w_i` where `w_i = (load_i + 1)² ` and `load_i` is the person's current upcoming missions. The convex cost prefers spreading work over repeatedly picking the same people. Because there is no seat count, every extra person adds cost, so this pass also yields the smallest team that covers the requirements.
 3. **Skill fit** — maximise `Σ_i x_i · f_i`, where `f_i` rewards level margin above each requirement the person covers (capped at +2 per requirement), so stronger fits win ties without over-concentrating experts (workload already dominates).
 
 Final ties are broken by crew member ID so results are **deterministic**.
@@ -310,7 +328,7 @@ Guardrails: 2-second solver time limit per pass. If the solver times out, fall b
   "method": "exact",              // or "heuristic"
   "complete": false,
   "team": [
-    { "crewMemberId": "…", "name": "A. Okafor", "pinned": false,
+    { "crewMemberId": "…", "name": "A. Okafor", "email": "a.okafor@lrl.space",
       "upcomingMissions": 1,
       "covers": [{ "skill": "Orbital Piloting", "level": 5, "required": 4 }] }
   ],
@@ -321,7 +339,7 @@ Guardrails: 2-second solver time limit per pass. If the solver times out, fall b
         "blocked": { "UNAVAILABLE": 2, "COMMITTED": 1, "AT_CAPACITY": 0, "EXCLUDED": 0 }
       } }
   ],
-  "unfilledSeats": 0,
+  "teamHash": "…",                // see §9.5
   "alternates": [ /* next-best candidates per requirement, max 3 each */ ]
 }
 ```
@@ -330,7 +348,7 @@ Gap explanations tell the Lead what to change: which constraint is blocking qual
 
 ### 9.5 Applying
 
-`POST /missions/{id}/match` returns a proposal with a `proposalId` (stored for 30 minutes with a hash of the inputs). `POST /missions/{id}/match/{proposalId}/apply` replaces the tentative crew with the proposal, but only if the input hash still matches; otherwise it returns 409 and the Lead re-runs. Submission re-validates regardless.
+`POST /missions/{id}/match` returns a proposal with a `proposalId`, stored for 30 minutes together with a `teamHash`: a SHA-256 over the proposed team members' email addresses (unique per user), lower-cased, sorted and joined. The hash is returned to the Lead with the proposal. `POST /missions/{id}/match/{proposalId}/apply` takes that `teamHash`, recomputes the hash from the stored proposal's team members' current emails, and applies the proposal (replacing the tentative crew) only if both match the stored hash. This guarantees the team being applied is exactly the team that was proposed and that no member has been dropped or altered since. Otherwise it returns 409 and the Lead re-runs. Submission re-validates regardless.
 
 ---
 
@@ -413,7 +431,7 @@ Cross-row integrity: composite foreign keys include `org_id` (e.g. `assignments(
 Two privileged paths exist, each with its own database role and minimal grants:
 
 - `app_platform` — used only by provisioning endpoints, on behalf of the operator, who belongs to no organisation. Needs no `orgId` as input from the caller: it generates the new organisation's ID itself, inserts the organisation and its first Director, and cannot select tenant data.
-- `app_scheduler` — can read `organisations(id, time_zone)` to iterate tenants; then performs each tenant's transitions through the normal `withTenant` path.
+- `app_scheduler` — can read `organisations(id, time_zone)` to iterate tenants, `INSERT` into `alerts` and `DELETE` expired alerts (§16.1); then performs each tenant's transitions through the normal `withTenant` path.
 
 IDs are UUIDv7 (time-ordered, non-guessable enough to avoid enumeration, and cross-tenant probes return 404 anyway).
 
@@ -448,7 +466,7 @@ Conventions:
 | `GET /v1/me` | all | Current user, role, org |
 | `GET/PATCH /v1/org/settings` | Director (read: all) | Time zone, workload cap |
 | `GET/POST /v1/users`, `PATCH /v1/users/{id}` | Director | Invite, change role, deactivate |
-| `GET/POST /v1/skills`, `PATCH /v1/skills/{id}` | Director (read: all) | Skill catalogue |
+| `GET/POST /v1/skills`, `PATCH /v1/skills/{id}` | Director (read: all) | Skill catalogue (add, list, rename [OQ-11]; no archive or delete) |
 | `GET /v1/crew`, `GET /v1/crew/{id}` | Director, Lead; crew: self | Crew profiles with skills, unavailability, load |
 | `PUT/DELETE /v1/crew/me/skills/{skillId}` | Crew | Set/remove own skill level |
 | `POST/DELETE /v1/crew/me/unavailability[/{id}]` | Crew | Manage own unavailable ranges |
@@ -456,12 +474,15 @@ Conventions:
 | `POST /v1/missions`, `PATCH /v1/missions/{id}` | Lead / owner | Create, edit |
 | `PUT /v1/missions/{id}/requirements` | owner | Replace requirement set |
 | `PUT /v1/missions/{id}/crew` | owner | Replace tentative crew (Crewing only) |
-| `POST /v1/missions/{id}/match` | owner | Run matcher (body: `pin`, `exclude`) |
+| `POST /v1/missions/{id}/match` | owner | Run matcher (body: `exclude`) |
 | `POST /v1/missions/{id}/match/{proposalId}/apply` | owner | Apply proposal |
 | `POST /v1/missions/{id}/transitions` | per transition | Body `{ "action": "start_crewing" \| "reopen" \| "submit" \| "withdraw" \| "approve" \| "reject" \| "cancel", "comment"?: … }` |
 | `GET /v1/assignments/me`, `POST /v1/assignments/{id}/acknowledge` | Crew | Own assignments, acknowledge |
 | `GET /v1/notifications`, `POST /v1/notifications/{id}/read` | all | Inbox |
 | `GET /v1/audit` | Director | Filter by entity, actor, time |
+| `GET /v1/alerts` | Director | Scheduler alerts for the organisation, filter by time (§16.1) |
+
+A test-only endpoint exists that runs one scheduler pass as if "today" were a supplied date, so the e2e suite can advance time (§19). It is registered only in non-production builds, is not part of the OpenAPI document, and is not part of the public API.
 
 A single transitions endpoint keeps the state machine in one place and makes invalid actions return a consistent `409 MISSION_INVALID_TRANSITION` listing the actions allowed from the current state for this actor.
 
@@ -481,17 +502,18 @@ mc platform org create --name "Lunar Research Lab" --director-email d@lrl.space
 # Director
 mc org settings show | set --timezone Europe/London --max-upcoming 3
 mc users invite --email lead@lrl.space --role lead | list | set-role | deactivate
-mc skills add "Orbital Piloting" | list | archive <id>
+mc skills add "Orbital Piloting" | list | rename <id> "<new name>"
 mc approvals list                      # missions pending approval
 mc missions approve <id> [--comment]
 mc missions reject <id> --reason "…"
 mc audit list [--entity mission:<id>] [--since 2026-09-01]
+mc alerts [--since 2026-09-01]         # scheduler alerts for the organisation
 
 # Mission Lead
-mc missions create --name "Artemis Relay" --start 2026-11-02 --end 2026-11-20 --crew-size 4
+mc missions create --name "Artemis Relay" --start 2026-11-02 --end 2026-11-20
 mc missions requirements set <id> --req "Orbital Piloting:4:1" --req "Medicine:3:2"
 mc missions start-crewing <id>
-mc missions match <id> [--pin <crewId>] [--exclude <crewId>]   # prints team, coverage, gaps
+mc missions match <id> [--exclude <crewId>]   # prints team, coverage, gaps
 mc missions match apply <id> <proposalId>
 mc missions crew set <id> <crewId>...
 mc missions submit | withdraw | cancel <id>
@@ -522,17 +544,18 @@ All tenant tables have `org_id uuid NOT NULL`, `created_at`, `updated_at`, RLS e
 | `users` | `id`, `org_id`, `email` (unique, citext), `name`, `role` enum(`director`,`lead`,`crew`), `password_hash`, `status` enum(`invited`,`active`,`deactivated`) |
 | `invites` | `id`, `org_id`, `user_id`, `code_hash`, `expires_at`, `used_at` |
 | `refresh_tokens` | `id`, `org_id`, `user_id`, `family_id`, `token_hash`, `expires_at`, `revoked_at` |
-| `crew_profiles` | `user_id` (PK, FK users where role = crew), `org_id` |
-| `skills` | `id`, `org_id`, `name` (unique per org, case-insensitive), `archived_at` |
+| `crew_profiles` | `user_id` (PK, FK users), `org_id`; created when a Crew Member is invited, kept (dormant) if the user later changes role |
+| `skills` | `id`, `org_id`, `name` (unique per org, case-insensitive) |
 | `crew_skills` | `org_id`, `crew_member_id`, `skill_id`, `level` smallint CHECK 1–5; PK (crew_member_id, skill_id) |
 | `unavailability` | `id`, `org_id`, `crew_member_id`, `period` daterange, `note` |
-| `missions` | `id`, `org_id`, `lead_id`, `name`, `description`, `start_date`, `end_date`, `crew_size`, `status` enum, `version` int |
+| `missions` | `id`, `org_id`, `lead_id`, `name`, `description`, `start_date`, `end_date`, `status` enum, `version` int |
 | `requirements` | `id`, `org_id`, `mission_id`, `skill_id`, `min_level` 1–5, `count` ≥1; unique (mission_id, skill_id) |
 | `assignments` | `id`, `org_id`, `mission_id`, `crew_member_id`, `assigned_by`, `acknowledged_at`; unique (mission_id, crew_member_id) |
 | `holds` | `id`, `org_id`, `assignment_id`, `crew_member_id`, `mission_id`, `period`, `released_at`, `release_reason`; exclusion constraint (§8) |
 | `approval_decisions` | `id`, `org_id`, `mission_id`, `director_id`, `decision` enum, `comment`, `decided_at` |
-| `match_proposals` | `id`, `org_id`, `mission_id`, `input_hash`, `result` jsonb, `expires_at` |
+| `match_proposals` | `id`, `org_id`, `mission_id`, `team_hash`, `result` jsonb, `expires_at` |
 | `notifications` | `id`, `org_id`, `user_id`, `type`, `payload` jsonb, `read_at` |
+| `alerts` | `id`, `org_id`, `source` (`scheduler`), `code`, `message`, `details` jsonb, `occurred_at`; `app_scheduler` may insert and delete (30-day retention); read by Directors via `app_tenant` |
 | `audit_events` | `id`, `org_id`, `actor_id` (null = system), `action`, `entity_type`, `entity_id`, `before` jsonb, `after` jsonb, `occurred_at`; append-only (UPDATE/DELETE revoked from `app_tenant`) |
 
 ---
@@ -546,6 +569,19 @@ Runs every 5 minutes (and once on start-up). For each organisation, computes "to
 3. Active with end date < today → Completed; release holds.
 
 Each transition uses the same service code as user actions (actor = `system`), is idempotent, and is audited. A missed run simply catches up on the next. Only one scheduler instance runs at a time, guarded by a Postgres advisory lock.
+
+A failure while processing one organisation is logged, raised as an alert (§16.1), and the scheduler continues with the remaining organisations. The failed organisation's changes for that run are rolled back as a whole and are retried by the next run.
+
+### 16.1 Alerts
+
+Alerts are the core's channel for operational problems that someone must act on. Today the only source is a scheduler failure for an organisation.
+
+- Each alert records the organisation, the source (`scheduler`), a stable `code`, a human-readable message, structured details (for example the transition being applied and the error) and the time.
+- It is written in its own transaction, separate from the failed organisation's transaction, so it survives that rollback. The scheduler writes it through the `app_scheduler` role, which has `INSERT` and `DELETE` on `alerts` (and nothing else beyond §11).
+- **Repeated failures:** one alert is raised per failed run. If an organisation keeps failing, an alert is written every run (every 5 minutes); there is no deduplication.
+- **Retention:** alerts are kept for 30 days. Each scheduler run deletes alerts older than 30 days.
+- Alerts are tenant-scoped and read by that organisation's Directors via `GET /v1/alerts` and `mc alerts [--since 2026-09-01]` [OQ-10]. Alerts never contain secrets or personal data (§18).
+- Alerts are not delivered anywhere else; as with notifications, external delivery is a non-goal for the core.
 
 ---
 
@@ -569,7 +605,7 @@ Each transition uses the same service code as user actions (actor = `system`), i
 - Tenant isolation as in §11, with automated cross-tenant tests on every endpoint.
 - 404 for resources outside the actor's visibility.
 - No PII in logs (emails masked), no secrets in audit payloads.
-- Request size limits, per-user rate limits on the matcher (it is the most expensive endpoint).
+- Request size limits, a per-user rate limit on the matcher (it is the most expensive endpoint), initially **30 requests per minute**, configurable, to be re-evaluated.
 - Dependencies pinned; `pnpm audit` in CI.
 - TLS terminated at the load balancer; HSTS.
 
@@ -585,7 +621,7 @@ Each transition uses the same service code as user actions (actor = `system`), i
 | Isolation | No cross-tenant access | For every endpoint, a second org's user attempts access by ID → 404; raw SQL tests confirm RLS returns zero rows with wrong/missing `app.org_id` |
 | Permissions | Role matrix §6 | Table-driven tests over the matrix |
 | Scheduler | Time-based transitions | Injected clock; time zone edge cases (org east/west of UTC around midnight) |
-| CLI | Primary workflows end-to-end | Scripts against docker-compose: operator → director → lead → crew → approve → activate (with clock override) |
+| CLI | Primary workflows end-to-end | Scripts against docker-compose: operator → director → lead → crew → approve → activate (time advanced through the test-only clock endpoint, which is not registered in production builds) |
 
 CI gate: typecheck, lint, unit, integration, e2e; coverage ≥ 90% for `core` and `matcher`.
 
@@ -600,7 +636,7 @@ Each milestone is independently demonstrable via the CLI.
 3. **Org and crew** — settings, skill catalogue, crew skills, unavailability (with OQ-1 guard), crew listing and filters, audit writing. *Done when:* crew can manage profiles; Leads can search crew.
 4. **Missions and lifecycle** — CRUD, requirements, manual crewing, transitions, holds with exclusion constraint, approvals, notifications, audit. *Done when:* full manual workflow and invariant tests pass.
 5. **Matcher** — pure engine, exact + heuristic, explanations, proposal/apply endpoints, CLI output. *Done when:* property tests vs oracle pass.
-6. **Scheduler and hardening** — scheduler, rate limits, OpenAPI, seed scenario, e2e suite, README.
+6. **Scheduler and hardening** — scheduler with failure alerts (`GET /v1/alerts`, `mc alerts`), rate limits, OpenAPI, seed scenario, test-only clock endpoint, e2e suite, README.
 
 ---
 
@@ -619,4 +655,4 @@ Each milestone is independently demonstrable via the CLI.
 
 ## 22. Future work
 
-Web UI; email/webhook notifications; configurable approval chains; skill verification and certifications with expiry; rest periods between missions; sub-day scheduling; ownership transfer of missions; multi-organisation users; SSO/OIDC; reporting on utilisation.
+Web UI; email/webhook notifications; skill archiving; role changes into Crew Member; configurable approval chains; skill verification and certifications with expiry; rest periods between missions; sub-day scheduling; ownership transfer of missions; multi-organisation users; SSO/OIDC; reporting on utilisation.
