@@ -67,3 +67,5 @@ export {
 export { missionRules } from './policy/index.js';
 export { crewHasCommitmentsGuard, leadOwnsMissionsGuard } from './services/guards.js';
 export { MatchService, teamHashOf } from './matching/match-service.js';
+export { AlertService } from './services/alert-service.js';
+export { DEMO_PASSWORD, DEMO_SCENARIO, seedDemo, type SeedConfig } from './seed/demo.js';

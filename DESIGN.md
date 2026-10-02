@@ -491,7 +491,14 @@ Conventions:
 | `GET /v1/audit` | Director | Newest first. Filters: `entity=<type>:<id>`, `actor=<userId>\|system`, `since`, `until` (ISO date or timestamp) |
 | `GET /v1/alerts` | Director | Scheduler alerts for the organisation, filter by time (§16.1) |
 
-A test-only endpoint exists that runs one scheduler pass as if "today" were a supplied date, so the e2e suite can advance time (§19). It is registered only in non-production builds, is not part of the OpenAPI document, and is not part of the public API.
+Two operator-only endpoints exist for the e2e suite and local development, registered only when `NODE_ENV` is not `production` **and** `ENABLE_TEST_ENDPOINTS=true` (off by default, and a production start-up refuses to run with it set), absent from the OpenAPI document and not part of the public API; both need the operator token:
+
+| Endpoint | Does |
+|---|---|
+| `POST /v1/test/scheduler/run` `{ "today": "YYYY-MM-DD" }` | Runs one scheduler pass as if `today` were the date in every organisation, so the e2e suite can advance time (§19). Waits up to 5 s for the scheduler's lock |
+| `POST /v1/test/seed` `{ "scenario": "demo" }` | Seeds the demo scenario (§14); `409 SEED_ALREADY_APPLIED` when it already exists |
+
+In a production build the routes do not exist (404 even for the operator), and `mc dev …` reports that the server offers no development commands. The API process has no `app_scheduler` login in production; outside it, `DATABASE_URL_SCHEDULER` lets the run endpoint work.
 
 A single transitions endpoint keeps the state machine in one place and makes invalid actions return a consistent `409 MISSION_INVALID_TRANSITION` listing the actions allowed from the current state for this actor.
 
@@ -517,7 +524,7 @@ mc approvals list                      # missions pending approval
 mc missions approve <id> [--comment]
 mc missions reject <id> --reason "…"
 mc audit list [--entity mission:<id>] [--actor <id>] [--since 2026-09-01] [--until 2026-10-01]
-mc alerts [--since 2026-09-01]         # scheduler alerts for the organisation
+mc alerts [--since 2026-09-01] [--until …]   # scheduler alerts for the organisation
 
 # Mission Lead
 mc missions create --name "Artemis Relay" --start 2026-11-02 --end 2026-11-20
@@ -616,7 +623,9 @@ Alerts are the core's channel for operational problems that someone must act on.
 - Tenant isolation as in §11, with automated cross-tenant tests on every endpoint.
 - 404 for resources outside the actor's visibility.
 - No PII in logs (emails masked), no secrets in audit payloads.
-- Request size limits, a per-user rate limit on the matcher (it is the most expensive endpoint), initially **30 requests per minute**, configurable, to be re-evaluated. The API has the mechanism (`matchRate`, per user, `429 RATE_LIMITED` with `Retry-After`); setting the number is deployment configuration (spec 06).
+- Request size limits (`BODY_LIMIT_BYTES`, default 1 MiB, Fastify's own, answered with `413 PAYLOAD_TOO_LARGE`), a per-user rate limit on the matcher (it is the most expensive endpoint), initially **30 requests per minute** (`MATCH_RATE_MAX`, `MATCH_RATE_WINDOW_SECONDS`), to be re-evaluated; beyond it `429 RATE_LIMITED` with `Retry-After`.
+- Every response carries `Strict-Transport-Security` (`HSTS_MAX_AGE_SECONDS`, default one year, 0 omits it), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy: same-origin`, a `default-src 'none'` content security policy and `Cache-Control: no-store`.
+- Logs: unexpected errors are logged by name, driver code and stack frames only, never the message (driver errors quote the failing statement and its parameters), and requests never log bodies or the `Authorization` header.
 - Dependencies pinned; `pnpm audit` in CI.
 - TLS terminated at the load balancer; HSTS.
 

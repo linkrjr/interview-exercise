@@ -1,6 +1,7 @@
 import {
   AddUnavailabilityRequestSchema,
   CreateSkillRequestSchema,
+  ListAlertsQuerySchema,
   ListAuditQuerySchema,
   ListCrewQuerySchema,
   ListSkillsQuerySchema,
@@ -110,5 +111,12 @@ export function orgCrewRoutes(app: FastifyInstance, deps: AppDeps): void {
     const parsed = ListAuditQuerySchema.safeParse(request.query);
     if (!parsed.success) throw validationError(parsed.error);
     return services.auditLog.list(requireActor(request), parsed.data);
+  });
+
+  // Operational alerts (Directors)
+  app.get('/v1/alerts', auth, async (request) => {
+    const parsed = ListAlertsQuerySchema.safeParse(request.query);
+    if (!parsed.success) throw validationError(parsed.error);
+    return services.alerts.list(requireActor(request), parsed.data);
   });
 }

@@ -16,3 +16,6 @@ export * from './assignments.js';
 export * from './missions.js';
 export * from './notifications.js';
 export * from './matching.js';
+export * from './alerts.js';
+export * from './openapi/index.js';
+export * from './dev.js';

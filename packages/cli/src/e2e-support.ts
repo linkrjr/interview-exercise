@@ -1,5 +1,6 @@
-import { buildApp } from '@mc/api';
+import { buildApp, createTestSupport } from '@mc/api';
 import { createHarness, type Harness } from '@mc/core/testing';
+import { createHighsSolver } from '@mc/matcher/highs';
 import type { DbUrls } from '@mc/db/testing';
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile } from 'node:fs/promises';
@@ -78,7 +79,10 @@ export interface E2e {
 }
 
 /** Starts the real API (with real audit persistence) on a random port, backed by the test database. */
-export async function startE2e(urls: DbUrls): Promise<E2e> {
+export async function startE2e(
+  urls: DbUrls,
+  options: { testSupport?: boolean } = {},
+): Promise<E2e> {
   const h = await createHarness(urls, { dbAudit: true });
   const app = buildApp({
     services: h,
@@ -86,6 +90,18 @@ export async function startE2e(urls: DbUrls): Promise<E2e> {
     operatorToken: OPERATOR_TOKEN,
     loginRate: { emailMax: 100, ipMax: 1000, windowMs: 60_000 },
     clock: h.clock,
+    // The test-only endpoints exist only when asked for, as in a non-production build.
+    testSupport:
+      options.testSupport === false
+        ? undefined
+        : createTestSupport({
+            db: h.db,
+            hasSchedulerLogin: true,
+            accessTokens: h.accessTokens,
+            solver: await createHighsSolver(),
+            logger: { info() {}, warn() {}, error() {} },
+            clock: h.clock,
+          }),
   });
   const apiUrl = await app.listen({ host: '127.0.0.1', port: 0 });
   return {

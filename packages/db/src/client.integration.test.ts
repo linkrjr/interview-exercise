@@ -210,3 +210,30 @@ describe('Drizzle schema parity', () => {
     }
   });
 });
+
+describe('withSchedulerLock', () => {
+  it('lets one holder in at a time and releases the lock afterwards', async () => {
+    const other = createDb({ schedulerUrl: urls.scheduler });
+    try {
+      let inner: { value: string } | undefined | 'unset' = 'unset';
+      const outer = await db.withSchedulerLock(async () => {
+        inner = await other.withSchedulerLock(async () => 'second');
+        return 'first';
+      });
+      expect(outer).toEqual({ value: 'first' });
+      expect(inner).toBeUndefined();
+      expect(await other.withSchedulerLock(async () => 'again')).toEqual({ value: 'again' });
+    } finally {
+      await other.close();
+    }
+  });
+
+  it('releases the lock when the work throws', async () => {
+    await expect(
+      db.withSchedulerLock(async () => {
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
+    expect(await db.withSchedulerLock(async () => 1)).toEqual({ value: 1 });
+  });
+});

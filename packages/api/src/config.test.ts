@@ -16,7 +16,49 @@ describe('loadConfig', () => {
       trustProxy: false,
       jwtPrivateKey: undefined,
       loginRate: { emailMax: 5, ipMax: 20, windowMs: 15 * 60 * 1000 },
+      // 30 matcher requests a minute per user, a 1 MiB body limit and one year of HSTS (DESIGN.md §18).
+      matchRate: { max: 30, windowMs: 60_000 },
+      bodyLimitBytes: 1_048_576,
+      hstsMaxAgeSeconds: 31_536_000,
+      schedulerUrl: undefined,
+      testEndpoints: false,
     });
+  });
+
+  it('enables the test endpoints only on request, and never in production', () => {
+    expect(loadConfig({ ...base, ENABLE_TEST_ENDPOINTS: 'true' }).testEndpoints).toBe(true);
+    expect(() =>
+      loadConfig({
+        ...base,
+        NODE_ENV: 'production',
+        JWT_PRIVATE_KEY: 'k',
+        JWT_PUBLIC_KEY: 'k',
+        ENABLE_TEST_ENDPOINTS: 'true',
+      }),
+    ).toThrow(/ENABLE_TEST_ENDPOINTS/);
+  });
+
+  it('reads the hardening settings', () => {
+    expect(
+      loadConfig({
+        ...base,
+        MATCH_RATE_MAX: '5',
+        MATCH_RATE_WINDOW_SECONDS: '10',
+        BODY_LIMIT_BYTES: '2048',
+        HSTS_MAX_AGE_SECONDS: '0',
+        DATABASE_URL_SCHEDULER: 'postgres://s',
+      }),
+    ).toMatchObject({
+      matchRate: { max: 5, windowMs: 10_000 },
+      bodyLimitBytes: 2048,
+      hstsMaxAgeSeconds: 0,
+      schedulerUrl: 'postgres://s',
+    });
+  });
+
+  it('refuses a rate limit or body limit that would disable the protection', () => {
+    expect(() => loadConfig({ ...base, MATCH_RATE_MAX: '0' })).toThrow(/MATCH_RATE_MAX/);
+    expect(() => loadConfig({ ...base, BODY_LIMIT_BYTES: '10' })).toThrow(/BODY_LIMIT_BYTES/);
   });
 
   it('reads overrides', () => {

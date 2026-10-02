@@ -107,7 +107,13 @@ describe('org and crew role matrix (DESIGN.md §6)', () => {
       expect(policy.can(actorWith(role), 'org.settings.read')).toBe(true);
       expect(policy.can(actorWith(role), 'skill.list')).toBe(true);
     }
-    for (const action of ['org.settings.update', 'skill.create', 'skill.rename', 'audit.read']) {
+    for (const action of [
+      'org.settings.update',
+      'skill.create',
+      'skill.rename',
+      'audit.read',
+      'alert.read',
+    ]) {
       expect(policy.can(actorWith('director'), action)).toBe(true);
       expect(policy.can(actorWith('lead'), action)).toBe(false);
       expect(policy.can(actorWith('crew'), action)).toBe(false);

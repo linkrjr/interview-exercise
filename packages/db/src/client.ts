@@ -21,8 +21,17 @@ export interface Db {
   withPlatform<T>(fn: (tx: PlatformTx) => Promise<T>): Promise<T>;
   /** Runs `fn` in one transaction as `app_scheduler`. */
   withScheduler<T>(fn: (tx: SchedulerTx) => Promise<T>): Promise<T>;
+  /**
+   * Runs `fn` only if no other process holds the scheduler's advisory lock, and holds the lock
+   * until `fn` settles (DESIGN.md §16). Resolves to `undefined` when someone else has it. The lock
+   * is tied to its own connection, so it is released if this process dies.
+   */
+  withSchedulerLock<T>(fn: () => Promise<T>): Promise<{ value: T } | undefined>;
   close(): Promise<void>;
 }
+
+/** The advisory lock key of the scheduler ("MCSCHED" in ASCII, which fits a bigint). */
+export const SCHEDULER_LOCK_KEY = '21747598096876868';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -109,6 +118,30 @@ export function createDb(config: DbConfig): Db {
         },
         fn,
       );
+    },
+    async withSchedulerLock(fn) {
+      const client = await pool('scheduler', config.schedulerUrl).connect();
+      let destroy: Error | undefined;
+      let held = false;
+      try {
+        const { rows } = await client.query<{ locked: boolean }>(
+          'SELECT pg_try_advisory_lock($1::bigint) AS locked',
+          [SCHEDULER_LOCK_KEY],
+        );
+        held = rows[0]?.locked === true;
+        if (!held) return undefined;
+        return { value: await fn() };
+      } finally {
+        if (held) {
+          try {
+            await client.query('SELECT pg_advisory_unlock($1::bigint)', [SCHEDULER_LOCK_KEY]);
+          } catch (unlockError) {
+            // Without a clean unlock the lock lives as long as the connection: destroy it.
+            destroy = unlockError instanceof Error ? unlockError : new Error(String(unlockError));
+          }
+        }
+        client.release(destroy);
+      }
     },
     async close() {
       const open = [...pools.values()];

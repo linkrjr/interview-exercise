@@ -19,6 +19,17 @@ const EnvSchema = z.object({
   LOGIN_RATE_EMAIL_MAX: z.coerce.number().int().min(1).default(5),
   LOGIN_RATE_IP_MAX: z.coerce.number().int().min(1).default(20),
   LOGIN_RATE_WINDOW_SECONDS: z.coerce.number().int().min(1).default(900),
+  // DESIGN.md §18: the matcher is the most expensive endpoint; 30 requests a minute per user to start.
+  MATCH_RATE_MAX: z.coerce.number().int().min(1).default(30),
+  MATCH_RATE_WINDOW_SECONDS: z.coerce.number().int().min(1).default(60),
+  // Fastify's own default, made explicit: the largest real request is a few kilobytes.
+  BODY_LIMIT_BYTES: z.coerce.number().int().min(1024).default(1_048_576),
+  // 0 turns the header off (for plain-HTTP development behind no proxy).
+  HSTS_MAX_AGE_SECONDS: z.coerce.number().int().min(0).default(31_536_000),
+  // Registers the test-only endpoints (/v1/test/*). Off unless asked for, and refused in production.
+  ENABLE_TEST_ENDPOINTS: bool,
+  // Only used by the test-only endpoints.
+  DATABASE_URL_SCHEDULER: z.string().min(1).optional(),
 });
 
 export interface Config {
@@ -34,6 +45,13 @@ export interface Config {
   jwtPrivateKey: string | undefined;
   jwtPublicKey: string | undefined;
   loginRate: { emailMax: number; ipMax: number; windowMs: number };
+  matchRate: { max: number; windowMs: number };
+  bodyLimitBytes: number;
+  hstsMaxAgeSeconds: number;
+  /** Login for `app_scheduler`; production does not need it (only the scheduler process does). */
+  schedulerUrl: string | undefined;
+  /** Whether to register `/v1/test/*`: needs `ENABLE_TEST_ENDPOINTS=true` outside production. */
+  testEndpoints: boolean;
 }
 
 /** PEM keys in environment variables often carry literal `\n` sequences. */
@@ -59,6 +77,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       'Invalid configuration:\n  JWT_PRIVATE_KEY and JWT_PUBLIC_KEY are required in production',
     );
   }
+  if (e.NODE_ENV === 'production' && e.ENABLE_TEST_ENDPOINTS) {
+    throw new Error(
+      'Invalid configuration:\n  ENABLE_TEST_ENDPOINTS must not be set in production',
+    );
+  }
   return {
     env: e.NODE_ENV,
     host: e.HOST,
@@ -75,5 +98,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       ipMax: e.LOGIN_RATE_IP_MAX,
       windowMs: e.LOGIN_RATE_WINDOW_SECONDS * 1000,
     },
+    matchRate: { max: e.MATCH_RATE_MAX, windowMs: e.MATCH_RATE_WINDOW_SECONDS * 1000 },
+    bodyLimitBytes: e.BODY_LIMIT_BYTES,
+    hstsMaxAgeSeconds: e.HSTS_MAX_AGE_SECONDS,
+    schedulerUrl: e.DATABASE_URL_SCHEDULER,
+    testEndpoints: e.ENABLE_TEST_ENDPOINTS ?? false,
   };
 }

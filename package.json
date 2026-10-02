@@ -17,7 +17,10 @@
     "test:integration": "pnpm -r --if-present test:integration",
     "test:coverage": "pnpm -r --if-present test:coverage",
     "db:migrate": "pnpm --filter @mc/db migrate",
-    "audit:ci": "pnpm audit --audit-level high"
+    "audit:ci": "pnpm audit --audit-level high",
+    "openapi:generate": "node packages/contracts/dist/bin/openapi.js openapi/openapi.json",
+    "openapi:check": "node packages/contracts/dist/bin/openapi.js --check openapi/openapi.json",
+    "e2e": "bash packages/e2e/run.sh"
   },
   "devDependencies": {
     "@types/node": "^24.19.0",

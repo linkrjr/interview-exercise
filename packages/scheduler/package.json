@@ -17,7 +17,18 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck:test": "tsc -p tsconfig.test.json",
-    "test:unit": "vitest run --passWithNoTests"
+    "start": "node dist/bin/scheduler.js",
+    "test:unit": "vitest run --passWithNoTests",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
-  "dependencies": {}
+  "bin": {
+    "mc-scheduler": "./dist/bin/scheduler.js"
+  },
+  "dependencies": {
+    "@mc/contracts": "workspace:*",
+    "@mc/core": "workspace:*",
+    "@mc/db": "workspace:*",
+    "drizzle-orm": "^0.45.3",
+    "zod": "^4.6.5"
+  }
 }

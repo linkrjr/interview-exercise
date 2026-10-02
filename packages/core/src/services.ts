@@ -10,6 +10,7 @@ import { MatchService } from './matching/match-service.js';
 import { AssignmentService } from './missions/assignment-service.js';
 import { MissionService } from './missions/mission-service.js';
 import { NotificationService } from './missions/notification-service.js';
+import { AlertService } from './services/alert-service.js';
 import { AuditService } from './services/audit-service.js';
 import { AuthService } from './services/auth-service.js';
 import { CrewService } from './services/crew-service.js';
@@ -47,6 +48,8 @@ export interface Services {
   notifications: NotificationService;
   /** Reads the audit log (the `audit` writer is a different thing: it records events). */
   auditLog: AuditService;
+  /** Reads the operational alerts the scheduler raises. */
+  alerts: AlertService;
   policy: Policy;
 }
 
@@ -77,6 +80,7 @@ export function createServices(config: ServicesConfig): Services {
     skills: new SkillService({ db: config.db, audit: config.audit, clock: config.clock, policy }),
     crew: new CrewService({ db: config.db, audit: config.audit, clock: config.clock, policy }),
     auditLog: new AuditService({ db: config.db, policy }),
+    alerts: new AlertService({ db: config.db, policy }),
     notifications,
     missions,
     matching: new MatchService({

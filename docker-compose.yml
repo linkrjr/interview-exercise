@@ -1,5 +1,5 @@
 # Local development: Postgres 16, a one-shot job that applies the migrations and gives the
-# application roles their logins, and the API. The scheduler is added by spec 06.
+# application roles their logins, the API and the scheduler.
 #
 # NODE_ENV=development lets the API generate an ephemeral JWT key pair (tokens die on restart).
 # For stable keys run `pnpm --filter @mc/api keygen` and set JWT_PRIVATE_KEY / JWT_PUBLIC_KEY.
@@ -47,8 +47,34 @@ services:
       DATABASE_URL_TENANT: postgres://app_tenant:${APP_TENANT_PASSWORD:-dev-tenant-password}@postgres:5432/mission_control
       DATABASE_URL_PLATFORM: postgres://app_platform:${APP_PLATFORM_PASSWORD:-dev-platform-password}@postgres:5432/mission_control
       PLATFORM_OPERATOR_TOKEN: ${PLATFORM_OPERATOR_TOKEN:-dev-operator-token-change-me-0123456789}
+      # Registers the test-only endpoints (/v1/test/*); never set it in production.
+      ENABLE_TEST_ENDPOINTS: 'true'
+      DATABASE_URL_SCHEDULER: postgres://app_scheduler:${APP_SCHEDULER_PASSWORD:-dev-scheduler-password}@postgres:5432/mission_control
       JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000/v1/openapi.json').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  scheduler:
+    build: .
+    command: node packages/scheduler/dist/bin/scheduler.js
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL_TENANT: postgres://app_tenant:${APP_TENANT_PASSWORD:-dev-tenant-password}@postgres:5432/mission_control
+      DATABASE_URL_SCHEDULER: postgres://app_scheduler:${APP_SCHEDULER_PASSWORD:-dev-scheduler-password}@postgres:5432/mission_control
+      SCHEDULER_INTERVAL_SECONDS: ${SCHEDULER_INTERVAL_SECONDS:-300}
+    restart: unless-stopped
 
 volumes:
   postgres-data:

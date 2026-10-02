@@ -20,4 +20,5 @@ export const orgCrewRules = {
   'crew.skill.edit': { roles: ['crew'] },
   'crew.unavailability.edit': { roles: ['crew'] },
   'audit.read': { roles: ['director'] },
+  'alert.read': { roles: ['director'] },
 } as const satisfies PolicyRules;

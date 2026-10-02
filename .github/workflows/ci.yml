@@ -23,6 +23,8 @@ jobs:
       # Testcontainers starts a disposable Postgres 16 on the runner's Docker daemon.
       - run: pnpm test:integration
       - run: pnpm test:coverage
+      # Fails when openapi/openapi.json no longer matches the Zod contracts.
+      - run: pnpm openapi:check
       - run: pnpm audit --audit-level high
 
   compose:
@@ -31,3 +33,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: docker compose up gives a migrated Postgres
         run: docker compose up --build --abort-on-container-exit --exit-code-from migrate
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Builds and starts docker-compose (Postgres, migrations, API, scheduler), runs the mc scripts
+      # against it, and tears it down.
+      - run: pnpm e2e

@@ -28,7 +28,8 @@
     "@mc/db": "workspace:*",
     "fastify": "^5.12.5",
     "zod": "^4.6.5",
-    "@mc/matcher": "workspace:*"
+    "@mc/matcher": "workspace:*",
+    "@mc/scheduler": "workspace:*"
   },
   "bin": {
     "mc-api": "./dist/bin/server.js"
