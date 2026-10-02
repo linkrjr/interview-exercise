@@ -52,7 +52,7 @@ These were confirmed with the product owner and are binding for implementation.
 |---|---|
 | Stack | TypeScript on Node.js; PostgreSQL |
 | Tenant isolation | Shared database and schema; `org_id` on every tenant row; enforced in the data-access layer **and** by PostgreSQL row-level security (RLS) as a backstop |
-| Authentication | Built-in email/password login issuing short-lived JWT access tokens; the CLI stores tokens locally |
+| Authentication | Built-in login with organisation ID, email and password, issuing short-lived JWT access tokens; the CLI stores tokens locally. Refresh tokens and invite codes carry the organisation ID, so every authentication step runs through the normal tenant path |
 | Tenancy provisioning | A platform operator creates organisations and each organisation's first Director. Each user belongs to exactly one organisation |
 | Roles | Exactly one role per user: Director, Mission Lead or Crew Member |
 | Approval | One Director approval, same rule in every organisation. Directors do not create or lead missions, so a Lead can never approve their own mission |
@@ -106,7 +106,7 @@ These were not covered by the decisions above. Each has a **proposed default** t
 ### 5.1 Concepts
 
 - **Organisation** — the tenant. Has settings: time zone, max upcoming missions per crew member.
-- **User** — belongs to one organisation, has one role, logs in with email and password. Email is unique across the platform (possible because users belong to one organisation), so login needs no organisation identifier.
+- **User** — belongs to one organisation, has one role, logs in with email and password. Email is unique across the platform (a person belongs to one organisation only). Login nevertheless takes the organisation ID, so credentials are checked through the tenant path.
 - **Crew profile** — every Crew Member user has exactly one, created when they are invited. Holds skills and unavailability. Only active Crew Member users are assignable to missions. If the user later changes role, the profile is kept but dormant.
 - **Skill** — an entry in the organisation's catalogue (e.g. "Orbital Piloting"). Cannot be archived or deleted in the core.
 - **Crew skill** — (crew member, skill, level 1–5).
@@ -273,7 +273,7 @@ CREATE TABLE holds (
 );
 ```
 
-Holds are never deleted. When a mission is rejected, withdrawn, cancelled, expired or completed, its holds are marked released, so they neither block nor count, while the history is preserved.
+An assignment has at most one live (unreleased) hold, enforced by a partial unique index; released holds accumulate as history. Holds are never deleted. When a mission is rejected, withdrawn, cancelled, expired or completed, its holds are marked released, so they neither block nor count, while the history is preserved.
 
 The workload cap is checked inside the submit transaction after taking `SELECT … FOR UPDATE` on each assignee's crew profile row, which serialises concurrent submissions touching the same person. The exclusion constraint is the backstop.
 
@@ -377,7 +377,7 @@ mission-control/
 
 | Concern | Choice | Why |
 |---|---|---|
-| Runtime | Node.js 22 LTS, TypeScript strict | Confirmed stack |
+| Runtime | Node.js 24 LTS, TypeScript strict | Confirmed stack |
 | HTTP | Fastify | Fast, schema-first, good Zod integration |
 | Validation / contracts | Zod, shared package | One source of truth for API and CLI; generates OpenAPI |
 | Database | PostgreSQL 16 | Confirmed; RLS, `daterange`, exclusion constraints |
@@ -412,7 +412,7 @@ CLI ──HTTPS/JSON──▶ Fastify route
 
 Isolation is enforced in **three layers**, each of which alone would prevent a leak:
 
-1. **Identity** — `orgId` comes only from the verified access token, never from a URL, header or body. The platform operator has no `orgId`; `/v1/platform/*` endpoints run without tenant context and use the separate `app_platform` role below.
+1. **Identity** — `orgId` comes only from the verified access token, never from a URL, header or body. The three unauthenticated authentication calls are the exception: login takes the organisation ID in its body, and refresh and accept-invite read it from the token or code they carry. Such an ID is only a lookup key into the tenant path; the credentials are then verified inside that tenant, and the access token's `org` claim comes from the verified user row. The platform operator has no `orgId`; `/v1/platform/*` endpoints run without tenant context and use the separate `app_platform` role below.
 2. **Application** — every repository function takes a tenant-scoped transaction; there is no unscoped query helper for tenant tables. A lint rule forbids importing the raw connection outside `db/`.
 3. **Database** — RLS on every tenant table:
 
@@ -420,15 +420,15 @@ Isolation is enforced in **three layers**, each of which alone would prevent a l
 ALTER TABLE missions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE missions FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON missions
-  USING      (org_id = current_setting('app.org_id', true)::uuid)
-  WITH CHECK (org_id = current_setting('app.org_id', true)::uuid);
+  USING      (org_id = NULLIF(current_setting('app.org_id', true), '')::uuid)
+  WITH CHECK (org_id = NULLIF(current_setting('app.org_id', true), '')::uuid);
 ```
 
-The application connects as `app_tenant`, which does not own the tables and does not have `BYPASSRLS`. If `app.org_id` is unset, `current_setting(…, true)` returns NULL and every query returns zero rows — failing closed. The setting is applied with `SET LOCAL` inside each transaction, so pooled connections cannot carry one tenant's context into another's request.
+The application connects as `app_tenant`, which does not own the tables and does not have `BYPASSRLS`. If `app.org_id` is unset, `current_setting(…, true)` returns NULL, or an empty string once a previous transaction on the same connection has set and released it; `NULLIF(…, '')` turns both into NULL, so every query returns zero rows — failing closed rather than erroring on an invalid UUID. The setting is applied with `SET LOCAL` inside each transaction, so pooled connections cannot carry one tenant's context into another's request.
 
 Cross-row integrity: composite foreign keys include `org_id` (e.g. `assignments(org_id, mission_id) → missions(org_id, id)`), so a row can never reference another tenant's row even via a crafted ID.
 
-Two privileged paths exist, each with its own database role and minimal grants:
+The three roles are created `NOLOGIN` by the migrations; a provisioning step gives them a login and a password from the environment, so no credentials live in version control. Each role has its own connection pool. Two privileged paths exist, each with its own database role and minimal grants:
 
 - `app_platform` — used only by provisioning endpoints, on behalf of the operator, who belongs to no organisation. Needs no `orgId` as input from the caller: it generates the new organisation's ID itself, inserts the organisation and its first Director, and cannot select tenant data.
 - `app_scheduler` — can read `organisations(id, time_zone)` to iterate tenants, `INSERT` into `alerts` and `DELETE` expired alerts (§16.1); then performs each tenant's transitions through the normal `withTenant` path.
@@ -439,10 +439,10 @@ IDs are UUIDv7 (time-ordered, non-guessable enough to avoid enumeration, and cro
 
 ## 12. Authentication
 
-- `POST /v1/auth/login` with email + password → access token (15 min) + refresh token (30 days, rotating, stored hashed, single-use; reuse revokes the session family).
+- `POST /v1/auth/login` with organisation ID + email + password → access token (15 min) + refresh token (30 days, rotating, stored hashed, single-use; reuse revokes the session family). The refresh token carries the organisation ID, so refresh resolves its tenant before looking the token up.
 - Access token claims: `sub` (user ID), `org` (org ID), `role`, `exp`. Role changes and deactivation revoke refresh tokens; the short access-token lifetime bounds staleness.
-- Invitations: a Director creates a user with a role; the API returns a one-time setup code (valid 72 h) that the invitee uses with `mc auth accept-invite` to set a password. (No email delivery in the core, per the notification decision.)
-- Login rate-limited per email and per IP; generic error messages.
+- Invitations: a Director creates a user with a role; the API returns a one-time setup code (valid 72 h, carrying the organisation ID) that the invitee uses with `mc auth accept-invite` to set a password. (No email delivery in the core, per the notification decision.)
+- Login rate-limited per email and per IP; generic error messages. A login failure is audited as a security event only when the user exists in the given organisation; failures for unknown organisations or emails are written only to the application log (email masked), because there is no tenant to attribute them to.
 - Platform operator: not a user and not a member of any organisation, so its credential carries no `org` claim. It is a separate credential configured at deploy time, accepted only on `/v1/platform/*`, and rejected everywhere else.
 - CLI stores tokens at `~/.config/mission-control/credentials.json` with mode `0600`, and refreshes transparently.
 
@@ -494,7 +494,7 @@ The CLI is a thin client over the API using the shared contracts. Human-readable
 
 ```
 mc config set-url https://api.example.com
-mc auth login | logout | accept-invite <code> | whoami
+mc auth login --org <orgId> | logout | accept-invite <code> | whoami
 
 # Operator
 mc platform org create --name "Lunar Research Lab" --director-email d@lrl.space
@@ -587,7 +587,7 @@ Alerts are the core's channel for operational problems that someone must act on.
 
 ## 17. Audit and notifications
 
-**Audit** events are written in the same transaction as the change they describe, so an audit record exists if and only if the change committed. Covered: every mission transition, requirement and crew change, approval decision, skill-catalogue and org-settings change, user invite/role change/deactivation, crew skill and unavailability changes, assignment acknowledgement, and login failures (as security events). Directors read them via API/CLI.
+**Audit** events are written in the same transaction as the change they describe, so an audit record exists if and only if the change committed. Covered: every mission transition, requirement and crew change, approval decision, skill-catalogue and org-settings change, user invite/role change/deactivation, crew skill and unavailability changes, assignment acknowledgement, and login failures for existing users (as security events, §12). Directors read them via API/CLI.
 
 **Notifications** (in-app inbox):
 
@@ -643,7 +643,7 @@ Each milestone is independently demonstrable via the CLI.
 ## 21. Guidance for AI coding agents
 
 - Treat §3 as fixed. For anything marked `[OQ-n]`, implement the proposed default and keep it isolated (a single policy function or setting) so it is easy to change.
-- Never query a tenant table outside `db.withTenant`. Never take `orgId` from request input. The operator's `/v1/platform/*` endpoints are the only ones without an `orgId`, because the operator belongs to no organisation.
+- Never query a tenant table outside `db.withTenant`. Never take `orgId` from request input, except as the lookup key of the three unauthenticated authentication calls (§11). The operator's `/v1/platform/*` endpoints are the only ones without an `orgId`, because the operator belongs to no organisation.
 - All lifecycle changes go through the state machine in `core`; do not update `missions.status` anywhere else.
 - Every mutating service call writes an audit event in the same transaction.
 - `matcher` must stay pure: no imports from `db`, `api` or Node I/O.

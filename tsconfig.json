@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/contracts" },
+    { "path": "packages/db" },
+    { "path": "packages/core" },
+    { "path": "packages/matcher" },
+    { "path": "packages/api" },
+    { "path": "packages/scheduler" },
+    { "path": "packages/cli" }
+  ]
+}

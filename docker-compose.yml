@@ -1,0 +1,35 @@
+# Local development: Postgres 16 plus a one-shot job that applies the migrations and gives the
+# application roles their logins. The API and scheduler services are added as they come into
+# existence (specs 02 and 06).
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: mission_control
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d mission_control']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    build: .
+    command: node packages/db/dist/bin/migrate.js
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL_MIGRATOR: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/mission_control
+      APP_TENANT_PASSWORD: ${APP_TENANT_PASSWORD:-dev-tenant-password}
+      APP_PLATFORM_PASSWORD: ${APP_PLATFORM_PASSWORD:-dev-platform-password}
+      APP_SCHEDULER_PASSWORD: ${APP_SCHEDULER_PASSWORD:-dev-scheduler-password}
+    restart: 'no'
+
+volumes:
+  postgres-data:

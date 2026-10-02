@@ -53,7 +53,9 @@ Matcher and its endpoints (05); the scheduler process itself (06); seed data (06
 
 ## Open points needing a product decision
 
-None open. The `start_crewing` guard and the crew-validation shape are decided in DESIGN.md §7.
+The `start_crewing` guard and the crew-validation shape are decided in DESIGN.md §7. One point is open:
+
+- **Hold history when an assignment is removed.** `holds.assignment_id` is a restricting foreign key (Spec 01), and holds are never deleted (§8). After a reject or withdraw, the mission is back in Crewing with released holds still pointing at its assignments, so removing a tentative assignment via `PUT /v1/missions/{id}/crew` would fail. Decide whether released holds keep a nullable `assignment_id`, assignments are soft-removed, or something else.
 
 ## Acceptance criteria
 

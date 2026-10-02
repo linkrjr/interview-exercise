@@ -1,0 +1,45 @@
+{
+  "name": "@mc/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "migrations"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck:test": "tsc -p tsconfig.test.json",
+    "test:unit": "vitest run --passWithNoTests",
+    "migrate": "node dist/bin/migrate.js",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.3",
+    "pg": "^8.23.1",
+    "uuidv7": "^1.2.1",
+    "@mc/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.11",
+    "testcontainers": "^12.2.0",
+    "@testcontainers/postgresql": "^12.2.0",
+    "eslint": "^10.11.0"
+  },
+  "bin": {
+    "mc-db-migrate": "./dist/bin/migrate.js"
+  }
+}
