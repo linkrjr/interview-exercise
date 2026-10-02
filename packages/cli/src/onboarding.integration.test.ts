@@ -128,7 +128,7 @@ describe('operator → Director → Lead → Crew onboarding, through the real m
       'lead',
     ]);
     expect((await director.run(['users', 'list'])).stdout).toMatch(
-      /ID\s+EMAIL\s+NAME\s+ROLE\s+STATUS/,
+      /ID\s+│\s+EMAIL\s+│\s+NAME\s+│\s+ROLE\s+│\s+STATUS/,
     );
 
     // 6. Role change revokes sessions: the Crew Member's tokens stop refreshing once the access token expires.

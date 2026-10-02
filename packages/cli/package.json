@@ -21,9 +21,10 @@
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
-    "commander": "^15.0.0",
     "@inquirer/prompts": "^8.7.2",
-    "@mc/contracts": "workspace:*"
+    "@mc/contracts": "workspace:*",
+    "commander": "^15.0.0",
+    "table": "^6.9.0"
   },
   "bin": {
     "mc": "./dist/bin/mc.js"

@@ -188,7 +188,7 @@ describe('org settings, skills, crew profiles, crew search and the audit log, th
       'crew.unavailability_added',
     );
     expect((await director.run(['audit', 'list', '--until', '2000-01-01'])).stdout.trim()).toMatch(
-      /^TIME \(UTC\)\s+ACTION\s+ENTITY\s+ACTOR$/,
+      /TIME \(UTC\)\s+│\s+ACTION\s+│\s+ENTITY\s+│\s+ACTOR/,
     );
     const everything = await director.run(['--json', 'audit', 'list', '--limit', '100']);
     expect(JSON.stringify(everything.json)).not.toContain('Medical');

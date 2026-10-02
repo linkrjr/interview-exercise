@@ -175,7 +175,7 @@ describe('mc audit list', () => {
       limit: '5',
     });
     const text = cli.out.join('');
-    expect(text.split('\n')[0]).toMatch(/^TIME \(UTC\)\s+ACTION\s+ENTITY\s+ACTOR$/);
+    expect(text.split('\n')[1]).toMatch(/TIME \(UTC\)\s+│\s+ACTION\s+│\s+ENTITY\s+│\s+ACTOR/);
     expect(text).toContain(`skill.created`);
     expect(text).toContain('system');
     expect(text).toContain('mc audit list --cursor CUR');
@@ -305,7 +305,7 @@ describe('mc profile', () => {
     ).toBe(0);
     expect(cli.calls[1]!.body).toEqual({ from: '2026-12-20', to: '2027-01-03' });
     expect(await runCli(['profile', 'unavailable', 'list'], cli.deps)).toBe(0);
-    expect(cli.out.join('')).toMatch(/ID\s+FROM\s+TO\s+NOTE/);
+    expect(cli.out.join('')).toMatch(/ID\s+│\s+FROM\s+│\s+TO\s+│\s+NOTE/);
     expect(await runCli(['profile', 'unavailable', 'remove', 'r1'], cli.deps)).toBe(0);
     expect(cli.calls.at(-1)).toMatchObject({
       method: 'DELETE',
@@ -392,7 +392,7 @@ describe('mc crew', () => {
     const url = new URL(cli.calls.at(-1)!.url);
     expect(url.searchParams.getAll('skill')).toEqual([`${SKILL.id}:3`, `${PILOT.id}:5`]);
     expect(url.searchParams.get('available')).toBe('2026-11-02:2026-11-20');
-    expect(cli.out.join('')).toMatch(/ID\s+NAME\s+EMAIL\s+SKILLS\s+LOAD/);
+    expect(cli.out.join('')).toMatch(/ID\s+│\s+NAME\s+│\s+EMAIL\s+│\s+SKILLS\s+│\s+LOAD/);
     expect(cli.out.join('')).toContain('Medicine:4');
   });
 

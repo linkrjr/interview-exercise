@@ -204,7 +204,9 @@ describe('mc missions create / show / list', () => {
     expect(url.searchParams.get('from')).toBe('2027-01-01');
     expect(url.searchParams.get('limit')).toBe('5');
     const text = cli.out.join('');
-    expect(text.split('\n')[0]).toMatch(/^ID\s+NAME\s+STATUS\s+START\s+END\s+LEAD\s+VERSION$/);
+    expect(text.split('\n')[1]).toMatch(
+      /ID\s+│\s+NAME\s+│\s+STATUS\s+│\s+START\s+│\s+END\s+│\s+LEAD\s+│\s+VERSION/,
+    );
     expect(text).toContain('mc missions list --cursor NEXT');
   });
 
@@ -510,7 +512,9 @@ describe('mc assignments', () => {
         : { status: 200, body: { ...assignment, acknowledgedAt: '2026-10-02T10:00:00.000Z' } },
     );
     expect(await runCli(['assignments', 'list'], cli.deps)).toBe(0);
-    expect(cli.out.join('')).toMatch(/ID\s+MISSION\s+STATUS\s+START\s+END\s+ACKNOWLEDGED/);
+    expect(cli.out.join('')).toMatch(
+      /ID\s+│\s+MISSION\s+│\s+STATUS\s+│\s+START\s+│\s+END\s+│\s+ACKNOWLEDGED/,
+    );
     expect(await runCli(['assignments', 'acknowledge', 'as1'], cli.deps)).toBe(0);
     expect(cli.calls[1]).toMatchObject({
       method: 'POST',

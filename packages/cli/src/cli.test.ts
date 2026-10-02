@@ -528,7 +528,7 @@ describe('mc users', () => {
     expect(await runCli(['users', 'list', '--limit', '2'], cli.deps)).toBe(0);
     expect(cli.calls[0]!.url).toBe('http://api.test/v1/users?limit=2');
     const text = cli.out.join('');
-    expect(text.split('\n')[0]).toMatch(/^ID\s+EMAIL\s+NAME\s+ROLE\s+STATUS$/);
+    expect(text.split('\n')[1]).toMatch(/ID\s+│\s+EMAIL\s+│\s+NAME\s+│\s+ROLE\s+│\s+STATUS/);
     expect(text).toContain('crew@lrl.space');
     expect(text).toContain('mc users list --cursor CUR');
   });
