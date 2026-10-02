@@ -1,9 +1,12 @@
 import { Command, CommanderError } from 'commander';
 import { ApiClient } from './client.js';
 import { auditCommands } from './commands/audit.js';
+import { assignmentCommands } from './commands/assignments.js';
 import { authCommands } from './commands/auth.js';
 import { configCommands } from './commands/config.js';
 import { crewCommands } from './commands/crew.js';
+import { inboxCommands } from './commands/inbox.js';
+import { missionCommands } from './commands/missions.js';
 import { orgCommands } from './commands/org.js';
 import { profileCommands } from './commands/profile.js';
 import { platformCommands } from './commands/platform.js';
@@ -34,6 +37,9 @@ export function buildProgram(deps: CliDeps): Command {
   auditCommands(program, ctx);
   crewCommands(program, ctx);
   profileCommands(program, ctx);
+  missionCommands(program, ctx);
+  assignmentCommands(program, ctx);
+  inboxCommands(program, ctx);
   // Subcommands inherit the output configuration and exit behaviour.
   for (const sub of program.commands) inherit(sub, program);
   return program;

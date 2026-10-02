@@ -36,6 +36,13 @@
       "when": 1790926542347,
       "tag": "0004_unavailability_no_self_overlap",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790928289349,
+      "tag": "0005_holds_keep_history_when_assignment_removed",
+      "breakpoints": true
     }
   ]
 }

@@ -1,8 +1,10 @@
 import { identityRules } from './identity-rules.js';
+import { missionRules } from './mission-rules.js';
 import { orgCrewRules } from './org-crew-rules.js';
 import { createPolicy } from './policy.js';
 
 export { identityRules } from './identity-rules.js';
+export { missionRules } from './mission-rules.js';
 export { orgCrewRules } from './org-crew-rules.js';
 export {
   createPolicy,
@@ -14,4 +16,4 @@ export {
 } from './policy.js';
 
 /** The application policy: every rule table registered so far. */
-export const policy = createPolicy(identityRules, orgCrewRules);
+export const policy = createPolicy(identityRules, orgCrewRules, missionRules);

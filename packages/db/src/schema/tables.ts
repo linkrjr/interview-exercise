@@ -137,7 +137,7 @@ export const assignments = pgTable('assignments', {
 export const holds = pgTable('holds', {
   id: uuid('id').primaryKey(),
   orgId: orgId(),
-  assignmentId: uuid('assignment_id').notNull(),
+  assignmentId: uuid('assignment_id'),
   crewMemberId: uuid('crew_member_id').notNull(),
   missionId: uuid('mission_id').notNull(),
   period: daterange('period').notNull(),

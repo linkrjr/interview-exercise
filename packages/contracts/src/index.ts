@@ -12,3 +12,6 @@ export * from './crew.js';
 export * from './settings.js';
 export * from './skills.js';
 export * from './timezone.js';
+export * from './assignments.js';
+export * from './missions.js';
+export * from './notifications.js';

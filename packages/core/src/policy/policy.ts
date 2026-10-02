@@ -14,6 +14,11 @@ export type PolicyRules = Record<string, PolicyRule<never>>;
 
 export interface Policy {
   can(actor: Actor, action: string, resource?: unknown): boolean;
+  /**
+   * Throws 403 unless the actor's role is one the action allows at all, ignoring any narrowing by
+   * resource. Used before loading a resource, so a role that can never act learns nothing about it.
+   */
+  requireRole(actor: Actor, action: string): void;
   /** Throws 403 when not allowed, or 404 with `concealAs404` so the resource's existence is not revealed. */
   authorize(actor: Actor, action: string, resource?: unknown, options?: AuthorizeOptions): void;
   actions(): string[];
@@ -43,8 +48,16 @@ export function createPolicy(...tables: PolicyRules[]): Policy {
     return rule.allow ? rule.allow(actor, resource) : true;
   };
 
+  const roleAllowed = (actor: Actor, action: string): boolean => {
+    if (actor.kind !== 'user') return false;
+    return rules.get(action)?.roles.includes(actor.role) ?? false;
+  };
+
   return {
     can,
+    requireRole(actor, action) {
+      if (!roleAllowed(actor, action)) throw forbidden();
+    },
     authorize(actor, action, resource, options) {
       if (can(actor, action, resource)) return;
       throw options?.concealAs404 ? notFound(options.concealAs404) : forbidden();

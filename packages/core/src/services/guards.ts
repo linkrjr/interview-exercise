@@ -1,6 +1,6 @@
 import { AppError, ErrorCodes } from '@mc/contracts';
 import { schema, type Tx } from '@mc/db';
-import { and, asc, eq, ne } from 'drizzle-orm';
+import { and, asc, eq, isNull, ne, notInArray, sql } from 'drizzle-orm';
 
 type UserRow = typeof schema.users.$inferSelect;
 
@@ -43,4 +43,48 @@ export const lastActiveDirectorGuard: UserChangeGuard = async (tx, { from }) => 
   }
 };
 
-export const defaultUserChangeGuards: readonly UserChangeGuard[] = [lastActiveDirectorGuard];
+/** A Crew Member cannot be deactivated, or change role, while they are held on a mission (OQ-4). */
+export const crewHasCommitmentsGuard: UserChangeGuard = async (tx, { from }) => {
+  if (from.role !== 'crew') return;
+  const [{ n }] = (await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(schema.holds)
+    .where(and(eq(schema.holds.crewMemberId, from.id), isNull(schema.holds.releasedAt)))) as [
+    { n: number },
+  ];
+  if (n > 0) {
+    throw new AppError(
+      ErrorCodes.USER_HAS_COMMITMENTS,
+      409,
+      'This crew member is committed to upcoming missions; ask the Mission Lead to re-crew or cancel first',
+    );
+  }
+};
+
+/** A Lead cannot be deactivated, or change role, while they own a mission that is not Completed or Cancelled (OQ-4). */
+export const leadOwnsMissionsGuard: UserChangeGuard = async (tx, { from }) => {
+  if (from.role !== 'lead') return;
+  const [open] = await tx
+    .select({ id: schema.missions.id })
+    .from(schema.missions)
+    .where(
+      and(
+        eq(schema.missions.leadId, from.id),
+        notInArray(schema.missions.status, ['completed', 'cancelled']),
+      ),
+    )
+    .limit(1);
+  if (open) {
+    throw new AppError(
+      ErrorCodes.USER_OWNS_MISSIONS,
+      409,
+      'This Lead owns missions that are not finished; ownership transfer is not supported, so cancel or complete them first',
+    );
+  }
+};
+
+export const defaultUserChangeGuards: readonly UserChangeGuard[] = [
+  lastActiveDirectorGuard,
+  crewHasCommitmentsGuard,
+  leadOwnsMissionsGuard,
+];

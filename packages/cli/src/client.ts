@@ -12,6 +12,8 @@ export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 export interface RequestOptions {
   body?: unknown;
   query?: Record<string, string | number | undefined>;
+  /** Extra request headers, e.g. `If-Match`. */
+  headers?: Record<string, string>;
   /** Parameters that are sent once per value, e.g. `skill=a&skill=b`. */
   repeat?: Record<string, string[]>;
   /** `user` sends the stored access token (refreshing it transparently); `operator` sends the given token; `none` sends nothing. */
@@ -43,6 +45,29 @@ function messageFor(problem: ProblemDetails): string {
   for (const r of Array.isArray(ranges) ? ranges : []) {
     lines.push(`  - existing range ${r.from} to ${r.to} [${r.id}]`);
   }
+  const issues = problem.issues as Array<{ code: string; crewMemberIds: string[] }> | undefined;
+  for (const i of Array.isArray(issues) ? issues : [])
+    lines.push(`  - ${i.code}: ${i.crewMemberIds.join(', ')}`);
+  const unmet = problem.unmetRequirements as
+    Array<{ skillId: string; minLevel: number; required: number; met: number }> | undefined;
+  for (const u of Array.isArray(unmet) ? unmet : []) {
+    lines.push(
+      `  - requirement ${u.skillId} (level ${u.minLevel}+): needs ${u.required}, has ${u.met}`,
+    );
+  }
+  const refused = problem.crewMemberIds as string[] | undefined;
+  if (Array.isArray(refused) && refused.length)
+    lines.push(`  - not assignable: ${refused.join(', ')}`);
+  const allowed = problem.allowedActions as string[] | undefined;
+  if (Array.isArray(allowed)) {
+    lines.push(
+      allowed.length
+        ? `  - you can now: ${allowed.join(', ')}`
+        : '  - nothing can be done to this mission by you now',
+    );
+  }
+  if (typeof problem.currentVersion === 'number')
+    lines.push(`  - the mission is now at version ${problem.currentVersion}`);
   const head = `${problem.detail ?? problem.title} (${problem.code})`;
   return lines.length > 0 ? `${head}\n${lines.join('\n')}` : head;
 }
@@ -110,6 +135,7 @@ export class ApiClient {
           accept: 'application/json',
           ...(options.body !== undefined ? { 'content-type': 'application/json' } : {}),
           ...(token ? { authorization: `Bearer ${token}` } : {}),
+          ...options.headers,
         },
         ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
       });

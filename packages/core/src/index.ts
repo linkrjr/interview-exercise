@@ -53,3 +53,16 @@ export {
 } from './services/crew-service.js';
 export { OrgSettingsService, getOrgSettings } from './services/org-settings-service.js';
 export { SkillService, toSkill } from './services/skill-service.js';
+export { AssignmentService } from './missions/assignment-service.js';
+export { loadUpcomingLoad, memberIssues, requirementCoverage } from './missions/eligibility.js';
+export { MissionService, type SystemTransitionResult } from './missions/mission-service.js';
+export { NotificationService } from './missions/notification-service.js';
+export {
+  TRANSITIONS,
+  actionsFor,
+  transitionFor,
+  type Transition,
+  type TransitionName,
+} from './missions/state-machine.js';
+export { missionRules } from './policy/index.js';
+export { crewHasCommitmentsGuard, leadOwnsMissionsGuard } from './services/guards.js';

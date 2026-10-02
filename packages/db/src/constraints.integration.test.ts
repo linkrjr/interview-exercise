@@ -341,3 +341,52 @@ describe('unavailability self-overlap', () => {
     });
   });
 });
+
+describe('hold history when an assignment is removed', () => {
+  it('keeps a released hold, with its assignment link cleared, when the assignment is deleted', async () => {
+    const x = await seedTenant(superuser, 'history');
+    await superuser.query(
+      "UPDATE holds SET released_at = now(), release_reason = 'rejected' WHERE id = $1",
+      [x.holdId],
+    );
+    await superuser.query('DELETE FROM assignments WHERE id = $1', [x.assignmentId]);
+    const { rows } = await superuser.query(
+      'SELECT assignment_id, org_id, mission_id, crew_member_id, release_reason FROM holds WHERE id = $1',
+      [x.holdId],
+    );
+    expect(rows).toEqual([
+      {
+        assignment_id: null,
+        org_id: x.orgId,
+        mission_id: x.missionId,
+        crew_member_id: x.crewId,
+        release_reason: 'rejected',
+      },
+    ]);
+  });
+
+  it('refuses to delete an assignment that still has a live hold', async () => {
+    const x = await seedTenant(superuser, 'live');
+    const error = await failure(
+      superuser.query('DELETE FROM assignments WHERE id = $1', [x.assignmentId]),
+    );
+    expect(error.code).toBe(CHECK);
+    const { rows } = await superuser.query('SELECT 1 FROM assignments WHERE id = $1', [
+      x.assignmentId,
+    ]);
+    expect(rows).toHaveLength(1);
+  });
+
+  it('does not let a live hold be inserted without an assignment', async () => {
+    const x = await seedTenant(superuser, 'orphan');
+    const mission = await addMission(superuser, x, '2040-01-01', '2040-01-05');
+    const error = await failure(
+      superuser.query(
+        `INSERT INTO holds (id, org_id, assignment_id, crew_member_id, mission_id, period)
+         VALUES ($1, $2, NULL, $3, $4, daterange('2040-01-01', '2040-01-05', '[]'))`,
+        [newId(), x.orgId, x.crewId, mission],
+      ),
+    );
+    expect(error.code).toBe(CHECK);
+  });
+});

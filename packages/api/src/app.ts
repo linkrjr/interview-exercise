@@ -4,6 +4,7 @@ import { systemClock } from '@mc/core';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { problemBody, PROBLEM_CONTENT_TYPE } from './problem.js';
 import { authRoutes } from './routes/auth.js';
+import { missionRoutes } from './routes/missions.js';
 import { orgCrewRoutes } from './routes/org-crew.js';
 import { platformRoutes } from './routes/platform.js';
 import { userRoutes } from './routes/users.js';
@@ -75,6 +76,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   authRoutes(app, deps);
   userRoutes(app, deps);
   orgCrewRoutes(app, deps);
+  missionRoutes(app, deps);
   platformRoutes(app, deps);
   return app;
 }

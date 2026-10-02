@@ -74,7 +74,9 @@ These were confirmed with the product owner and are binding for implementation.
 | Mission ownership | Only the Lead who owns a mission can edit, crew, submit or cancel it. Other Leads can view it |
 | Assignment response | Assignments are binding. Crew members acknowledge receipt; they cannot refuse |
 | Notifications | In-app inbox, readable via API and CLI |
-| Visibility | Directors see everything in their organisation. Leads see all missions and all crew profiles. Crew Members see only their own profile and their own assignments |
+| Visibility | Directors see everything in their organisation. Leads see all missions and all crew profiles. Crew Members see only their own profile and their own assignments. A Crew Member sees a mission from Approved onward (Approved, Active, Completed), and still sees one that was cancelled after being approved (they were told about it); never one cancelled before approval |
+| Denials | A role or ownership that can never perform an action gets 403, whatever the state (a Director submitting, a Lead approving, a Lead acting on another Lead's mission, Crew anything). An actor who may perform it but not in the mission's current state gets `409 MISSION_INVALID_TRANSITION` with the actions allowed now |
+| Submit errors | A failed submit names the kind and the people (`CREW_NOT_ACTIVE`, `CREW_UNAVAILABLE`, `CREW_DOUBLE_BOOKED`, `WORKLOAD_CAP_EXCEEDED`, `REQUIREMENTS_NOT_MET`, `MISSION_CREW_EMPTY`), unlike the generic `NOT_ELIGIBLE` of the crew validation on reads |
 | Matcher objective | Propose the best whole team at once (not seat by seat), subject to hard constraints, favouring balanced workload |
 | Infeasible matches | Return the best partial team plus each unmet requirement and why it could not be met |
 | Audit | All state changes (lifecycle, assignments, roles, settings, profiles) are audited; Directors can read the log, newest first. Bare dates in its filters are UTC days (`since` inclusive, `until` exclusive) |
@@ -264,7 +266,7 @@ The no-overlap rule is enforced by PostgreSQL itself, so concurrent submissions 
 CREATE TABLE holds (
   id              uuid PRIMARY KEY,
   org_id          uuid NOT NULL,
-  assignment_id   uuid NOT NULL,        -- the assignment this hold makes binding
+  assignment_id   uuid,                 -- the assignment this hold makes binding; cleared if the assignment is removed
   crew_member_id  uuid NOT NULL,
   mission_id      uuid NOT NULL,
   period          daterange NOT NULL,   -- '[start, end]' inclusive
@@ -275,7 +277,7 @@ CREATE TABLE holds (
 );
 ```
 
-An assignment has at most one live (unreleased) hold, enforced by a partial unique index; released holds accumulate as history. Holds are never deleted. When a mission is rejected, withdrawn, cancelled, expired or completed, its holds are marked released, so they neither block nor count, while the history is preserved.
+An assignment has at most one live (unreleased) hold, enforced by a partial unique index; released holds accumulate as history. Holds are never deleted. When a mission returns to Crewing (rejected, withdrawn, expired) its tentative crew can be edited again and a removed assignment is really deleted: its released holds survive as history with `assignment_id` set to NULL (`ON DELETE SET NULL`), and a live hold must always keep its assignment (a CHECK). When a mission is rejected, withdrawn, cancelled, expired or completed, its holds are marked released, so they neither block nor count, while the history is preserved.
 
 The workload cap is checked inside the submit transaction after taking `SELECT … FOR UPDATE` on each assignee's crew profile row, which serialises concurrent submissions touching the same person. The exclusion constraint is the backstop.
 
@@ -458,7 +460,7 @@ Conventions:
 
 - Errors use RFC 9457 `application/problem+json` with a stable `code` (e.g. `MISSION_INVALID_TRANSITION`, `CREW_DOUBLE_BOOKED`, `WORKLOAD_CAP_EXCEEDED`) and, for validation failures, per-field details.
 - Cursor pagination (`?cursor=…&limit=…`, max 100).
-- Mission mutations require `If-Match: <version>`; stale versions return 412.
+- Mission mutations (edit, requirements, crew, transitions) require `If-Match: <version>` (`3`, `"3"` or `W/"3"`): a stale version returns 412 (with `currentVersion`), a missing header 428, a malformed one 400. Mission responses for Directors and Leads carry the version in the body and as an `ETag`. Problems carry extension members (`allowedActions`, `missionStatus`, `issues`, `unmetRequirements`, `crewMemberIds`, `currentVersion`, …); the mission's own status is `missionStatus` because `status` is the HTTP status.
 - Dates are ISO `YYYY-MM-DD`; ranges are inclusive.
 
 | Method & path | Who | Purpose |
@@ -472,13 +474,13 @@ Conventions:
 | `GET /v1/crew`, `GET /v1/crew/{id}` | Director, Lead; crew: self | Active Crew Members with skills, unavailability and load. Filters: `skill=<skillId>:<minLevel>` (repeatable, all must hold) and `available=<from>:<to>`. A Crew Member gets only themself; anyone else's id is a 404 |
 | `PUT/DELETE /v1/crew/me/skills/{skillId}` | Crew | Set/remove own skill level (`DELETE` of a level never set is a 404) |
 | `POST/DELETE /v1/crew/me/unavailability[/{id}]` | Crew | Manage own unavailable ranges. Conflicts return 409 with `UNAVAILABILITY_CONFLICTS_WITH_MISSIONS` (and a `missions` list) or `UNAVAILABILITY_OVERLAPS_EXISTING` (and an `unavailability` list) |
-| `GET /v1/missions`, `GET /v1/missions/{id}` | per visibility rules | List/filter by status, lead, dates |
+| `GET /v1/missions`, `GET /v1/missions/{id}` | per visibility rules | List (newest first) and filter by `status` (repeatable), `leadId`, and `from`/`to` (missions overlapping those days). Directors and Leads get the full mission (with `allowedActions`, and `crewValidation` while Crewing); Crew get the reduced view of OQ-3 |
 | `POST /v1/missions`, `PATCH /v1/missions/{id}` | Lead / owner | Create, edit |
 | `PUT /v1/missions/{id}/requirements` | owner | Replace requirement set |
 | `PUT /v1/missions/{id}/crew` | owner | Replace tentative crew (Crewing only) |
 | `POST /v1/missions/{id}/match` | owner | Run matcher (body: `exclude`) |
 | `POST /v1/missions/{id}/match/{proposalId}/apply` | owner | Apply proposal |
-| `POST /v1/missions/{id}/transitions` | per transition | Body `{ "action": "start_crewing" \| "reopen" \| "submit" \| "withdraw" \| "approve" \| "reject" \| "cancel", "comment"?: … }` |
+| `POST /v1/missions/{id}/transitions` | per transition: owning Lead (start_crewing, reopen, submit, withdraw, cancel) or any Director (approve, reject) | Body `{ "action": "start_crewing" \| "reopen" \| "submit" \| "withdraw" \| "approve" \| "reject" \| "cancel", "comment"?: … }` |
 | `GET /v1/assignments/me`, `POST /v1/assignments/{id}/acknowledge` | Crew | Own assignments, acknowledge |
 | `GET /v1/notifications`, `POST /v1/notifications/{id}/read` | all | Inbox |
 | `GET /v1/audit` | Director | Newest first. Filters: `entity=<type>:<id>`, `actor=<userId>\|system`, `since`, `until` (ISO date or timestamp) |
@@ -514,13 +516,14 @@ mc alerts [--since 2026-09-01]         # scheduler alerts for the organisation
 
 # Mission Lead
 mc missions create --name "Artemis Relay" --start 2026-11-02 --end 2026-11-20
-mc missions requirements set <id> --req "Orbital Piloting:4:1" --req "Medicine:3:2"
+mc missions requirements set <id> --req "Orbital Piloting:4:1" --req "Medicine:3:2"   # or --clear
 mc missions start-crewing <id>
 mc missions match <id> [--exclude <crewId>]   # prints team, coverage, gaps
 mc missions match apply <id> <proposalId>
-mc missions crew set <id> <crewId>...
-mc missions submit | withdraw | cancel <id>
-mc missions list [--status crewing] [--mine] | show <id>
+mc missions crew set <id> <crewId>...         # or --clear
+# every change takes --version <n>; by default the CLI sends the version it has just read
+mc missions submit | withdraw | reopen | cancel <id>
+mc missions list [--status crewing]... [--mine] [--lead <id>] [--from <date>] [--to <date>] | show <id>
 mc crew list [--skill "Medicine>=3"] [--available 2026-11-02:2026-11-20] | show <id>
 
 # Crew Member
@@ -554,7 +557,7 @@ All tenant tables have `org_id uuid NOT NULL`, `created_at`, `updated_at`, RLS e
 | `missions` | `id`, `org_id`, `lead_id`, `name`, `description`, `start_date`, `end_date`, `status` enum, `version` int |
 | `requirements` | `id`, `org_id`, `mission_id`, `skill_id`, `min_level` 1–5, `count` ≥1; unique (mission_id, skill_id) |
 | `assignments` | `id`, `org_id`, `mission_id`, `crew_member_id`, `assigned_by`, `acknowledged_at`; unique (mission_id, crew_member_id) |
-| `holds` | `id`, `org_id`, `assignment_id`, `crew_member_id`, `mission_id`, `period`, `released_at`, `release_reason`; exclusion constraint (§8) |
+| `holds` | `id`, `org_id`, `assignment_id` (nullable), `crew_member_id`, `mission_id`, `period`, `released_at`, `release_reason`; exclusion constraint (§8) |
 | `approval_decisions` | `id`, `org_id`, `mission_id`, `director_id`, `decision` enum, `comment`, `decided_at` |
 | `match_proposals` | `id`, `org_id`, `mission_id`, `team_hash`, `result` jsonb, `expires_at` |
 | `notifications` | `id`, `org_id`, `user_id`, `type`, `payload` jsonb, `read_at` |
@@ -596,10 +599,10 @@ Alerts are the core's channel for operational problems that someone must act on.
 
 | Event | Recipients |
 |---|---|
-| Mission submitted | All Directors |
-| Approved / rejected (with reason) / expired | Owning Lead |
-| Approved (you are assigned) [OQ-8] | Each assigned crew member |
-| Approved mission cancelled | Each assigned crew member |
+| Mission submitted (`mission.submitted`) | All active Directors |
+| Approved (`mission.approved`) / rejected with reason (`mission.rejected`) / expired (`mission.expired`) | Owning Lead |
+| Approved, you are assigned [OQ-8] (`mission.assigned`) | Each assigned crew member |
+| Approved mission cancelled (`mission.cancelled`) | Each assigned crew member |
 
 ---
 
