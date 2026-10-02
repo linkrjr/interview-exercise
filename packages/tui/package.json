@@ -1,0 +1,29 @@
+{
+  "name": "@mc/tui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.tsx",
+    "dev": "bun --watch run src/index.tsx",
+    "typecheck:test": "tsc -p tsconfig.json",
+    "test:unit": "bun test"
+  },
+  "bin": {
+    "mc-tui": "./src/index.tsx"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "dependencies": {
+    "@mc/cli": "workspace:*",
+    "@mc/contracts": "workspace:*",
+    "@opentui/core": "^0.5.14",
+    "@opentui/react": "^0.5.14",
+    "react": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "@types/react": "^19.3.0"
+  }
+}

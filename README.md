@@ -137,3 +137,14 @@ mc dev run-scheduler --date 2027-03-02
 ### The HTTP API
 
 The API is documented in OpenAPI 3.1 at `GET /v1/openapi.json` (public), and a committed copy is in [openapi/openapi.json](openapi/openapi.json). Sign in with `POST /v1/auth/login`, then send `Authorization: Bearer <accessToken>`. Every change to a mission sends the version you last saw in `If-Match`. Errors are `application/problem+json` with a stable `code`.
+
+## Terminal UI (work in progress)
+
+`packages/tui` is the start of a full-screen terminal client built with [OpenTUI](https://opentui.com/) and React. OpenTUI needs Bun (>= 1.3) or Node 26.4+, so this package runs on Bun while the rest of the repository stays on Node 24.
+
+```sh
+pnpm build                              # the TUI reads the CLI's config through @mc/cli
+bun packages/tui/src/index.tsx          # or: pnpm --filter @mc/tui start | dev (watch mode)
+```
+
+It shares the CLI's configuration and credentials (`mc config set-url`, `mc auth login`); press `q` to quit. Tests: `pnpm --filter @mc/tui test:unit`.
