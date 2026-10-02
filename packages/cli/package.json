@@ -17,7 +17,20 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck:test": "tsc -p tsconfig.test.json",
-    "test:unit": "vitest run --passWithNoTests"
+    "test:unit": "vitest run --passWithNoTests",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
-  "dependencies": {}
+  "dependencies": {
+    "commander": "^15.0.0",
+    "@inquirer/prompts": "^8.7.2",
+    "@mc/contracts": "workspace:*"
+  },
+  "bin": {
+    "mc": "./dist/bin/mc.js"
+  },
+  "devDependencies": {
+    "@mc/api": "workspace:*",
+    "@mc/core": "workspace:*",
+    "@mc/db": "workspace:*"
+  }
 }

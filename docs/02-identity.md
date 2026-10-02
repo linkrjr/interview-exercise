@@ -52,3 +52,23 @@ None open. Role-change behaviour is decided in DESIGN.md §3.
 ## Tests
 
 Auth flows incl. expiry and reuse detection; role matrix tests table-driven from the matrix data; cross-tenant 404 test on every endpoint here; rate-limit test; CLI e2e of the onboarding chain.
+
+## Implementation notes
+
+Status: implemented. Decisions taken while building, for the specs that follow:
+
+- **Operator credential:** a static bearer token (`PLATFORM_OPERATOR_TOKEN`, ≥ 32 characters, compared in constant time over SHA-256 digests). The CLI reads `MC_OPERATOR_TOKEN` or `--token` and never stores it.
+- **Names and passwords:** `users.name` is nullable until the invite is accepted (migration `0003`); the invitee gives name and password in `mc auth accept-invite`. Password: 12–128 characters, length only (`PASSWORD_TOO_SHORT`). Accepting an invite also signs the user in.
+- **Invite recovery:** only the newest invite of a user is valid. `POST /v1/users/{id}/invites` (Director) and `POST /v1/platform/organisations/{id}/invites` (operator, naming the user) issue a new code without needing any UPDATE privilege. There is no reactivation of deactivated users. An operator-issued invite can only ever be accepted by a user who is still `invited`.
+- **Deactivating an invited user** is allowed and kills their invite; the credential CHECK only requires a name and password for `active` users.
+- **Tokens:** refresh tokens and invite codes are `<orgId>.<secret>`; only a SHA-256 of the secret is stored. JWT: EdDSA, `kid` header, claims `sub`, `org`, `role`, `iat`, `exp`. Keys come from `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` (`pnpm --filter @mc/api keygen`); outside production the API generates an ephemeral pair when none is set.
+- **Accept-invite cost:** the invite is validated (unknown, used, expired, superseded) before the argon2 hash is computed, and checked again when claimed; bad codes therefore cost one cheap lookup. The route has no rate limiter (decision: validation only).
+- **Refresh-token reuse:** only a token that was rotated (it has a newer token in its session family) counts as theft: the family is revoked and `auth.refresh_token_reuse_detected` is audited. A token revoked by logout, a role change or a deactivation is just `INVALID_REFRESH_TOKEN`, with no alert.
+- **`WWW-Authenticate: Bearer`** is sent only on `UNAUTHENTICATED` responses (missing or bad credential), not on successes or other 401s.
+- **Rate limits:** 5 attempts per email and 20 per IP per 15 minutes, in memory per process, counting every valid login request. Env-configurable (`LOGIN_RATE_*`). Behind a proxy, set `TRUST_PROXY=true` so the client IP is used.
+- **Authorisation:** `createPolicy(...ruleTables)` with `identityRules` as data; later specs add their own tables. Role-forbidden calls return 403; resources of another organisation, and malformed ids, return 404.
+- **User-change guards:** `UserChangeGuard` functions (`lastActiveDirectorGuard` here) run on role change and deactivation; Spec 04 appends its Crew and Lead guards to `defaultUserChangeGuards`. The last-Director guard locks the active Directors (`SELECT … FOR UPDATE`), so concurrent changes cannot both pass.
+- **Audit:** every audited site calls the `AuditWriter` port; the API server wires a no-op writer until Spec 03 provides the database one. Audited: `user.invited`, `user.invite_reissued`, `user.role_changed`, `user.deactivated`, `auth.invite_accepted`, `auth.login_failed` (existing users only), `auth.refresh_token_reuse_detected`. Operator provisioning is not audited (the operator cannot write to `audit_events`).
+- **CLI:** `mc` stores `config.json` and `credentials.json` (mode 0600, directory 0700) in `~/.config/mission-control` (`MC_CONFIG_DIR` overrides). Passwords come from `--password-stdin`, `MC_PASSWORD` or a hidden prompt; there is no `--password` flag. Exit codes: 400/415/422 → 1, 401/403 → 2, 404 → 3, 409/412 → 4, 429/5xx/unreachable → 5. `--json` prints raw responses (errors as JSON on stderr).
+- **Compose:** the `api` service (port 3000, `API_PORT`) runs after `migrate`. The onboarding chain was verified with the real `mc` against it.
+- **Unchanged limitation:** access tokens stay valid for up to 15 minutes after a role change or deactivation (§12); only refresh is cut off.

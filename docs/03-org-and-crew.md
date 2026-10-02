@@ -55,7 +55,7 @@ None open. Skill archiving is removed (DESIGN.md OQ-7). Renaming is OQ-11, imple
 - Leads can filter crew by skill level and by availability window.
 - Every mutating call here writes an audit event in the same transaction; a rolled-back change leaves no audit row.
 - Director can read the audit log; Lead and Crew get 403/404 per §6.
-- Settings changes take effect for the next request; invalid time zones and out-of-range caps are rejected with field errors.
+- Settings changes take effect for the next request; invalid time zones and out-of-range caps are rejected with field errors. `organisations.time_zone` is free text in the database, so this validation is the only guard: a bad value would break the scheduler (Spec 06).
 
 ## Tests
 

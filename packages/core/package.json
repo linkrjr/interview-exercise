@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
     }
   },
   "files": [
@@ -18,10 +22,15 @@
     "build": "tsc -b",
     "typecheck:test": "tsc -p tsconfig.test.json",
     "test:unit": "vitest run --passWithNoTests",
-    "test:coverage": "vitest run --coverage --passWithNoTests"
+    "test:coverage": "vitest run --coverage --config vitest.coverage.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@mc/contracts": "workspace:*",
-    "@mc/db": "workspace:*"
+    "@mc/db": "workspace:*",
+    "@node-rs/argon2": "^2.2.1",
+    "drizzle-orm": "^0.45.3",
+    "jose": "^6.2.12",
+    "zod": "^4.6.5"
   }
 }

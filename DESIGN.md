@@ -441,9 +441,9 @@ IDs are UUIDv7 (time-ordered, non-guessable enough to avoid enumeration, and cro
 
 - `POST /v1/auth/login` with organisation ID + email + password → access token (15 min) + refresh token (30 days, rotating, stored hashed, single-use; reuse revokes the session family). The refresh token carries the organisation ID, so refresh resolves its tenant before looking the token up.
 - Access token claims: `sub` (user ID), `org` (org ID), `role`, `exp`. Role changes and deactivation revoke refresh tokens; the short access-token lifetime bounds staleness.
-- Invitations: a Director creates a user with a role; the API returns a one-time setup code (valid 72 h, carrying the organisation ID) that the invitee uses with `mc auth accept-invite` to set a password. (No email delivery in the core, per the notification decision.)
-- Login rate-limited per email and per IP; generic error messages. A login failure is audited as a security event only when the user exists in the given organisation; failures for unknown organisations or emails are written only to the application log (email masked), because there is no tenant to attribute them to.
-- Platform operator: not a user and not a member of any organisation, so its credential carries no `org` claim. It is a separate credential configured at deploy time, accepted only on `/v1/platform/*`, and rejected everywhere else.
+- Invitations: a Director creates a user with a role; the API returns a one-time setup code (valid 72 h, carrying the organisation ID) that the invitee uses with `mc auth accept-invite`, which asks for everything the invite did not contain: their name and a password (12 to 128 characters, length only). Accepting activates the user, signs them in and remembers the organisation ID. Only the newest invite of a user is valid, so a Director can re-issue one (`POST /v1/users/{id}/invites`) when a code expired or was lost, and the operator can do the same for the first Director (`POST /v1/platform/organisations/{id}/invites`). (No email delivery in the core, per the notification decision.)
+- Login rate-limited to 5 attempts per email and 20 per IP per 15 minutes, counted in memory per API process (configurable); generic error messages. A login failure is audited as a security event only when the user exists in the given organisation; failures for unknown organisations or emails are written only to the application log (email masked), because there is no tenant to attribute them to.
+- Platform operator: not a user and not a member of any organisation, so its credential carries no `org` claim. It is a static bearer token configured at deploy time (`PLATFORM_OPERATOR_TOKEN`, at least 32 characters), read by the CLI from `MC_OPERATOR_TOKEN` or `--token` and never stored; it is accepted only on `/v1/platform/*`, and rejected everywhere else.
 - CLI stores tokens at `~/.config/mission-control/credentials.json` with mode `0600`, and refreshes transparently.
 
 ---
@@ -465,7 +465,7 @@ Conventions:
 | `POST /v1/auth/login`, `/refresh`, `/logout`, `/accept-invite` | anyone | Session management |
 | `GET /v1/me` | all | Current user, role, org |
 | `GET/PATCH /v1/org/settings` | Director (read: all) | Time zone, workload cap |
-| `GET/POST /v1/users`, `PATCH /v1/users/{id}` | Director | Invite, change role, deactivate |
+| `GET/POST /v1/users`, `PATCH /v1/users/{id}`, `POST /v1/users/{id}/invites` | Director | Invite, change role, deactivate, re-issue an invite |
 | `GET/POST /v1/skills`, `PATCH /v1/skills/{id}` | Director (read: all) | Skill catalogue (add, list, rename [OQ-11]; no archive or delete) |
 | `GET /v1/crew`, `GET /v1/crew/{id}` | Director, Lead; crew: self | Crew profiles with skills, unavailability, load |
 | `PUT/DELETE /v1/crew/me/skills/{skillId}` | Crew | Set/remove own skill level |
@@ -497,11 +497,12 @@ mc config set-url https://api.example.com
 mc auth login --org <orgId> | logout | accept-invite <code> | whoami
 
 # Operator
-mc platform org create --name "Lunar Research Lab" --director-email d@lrl.space
+mc platform org create --name "Lunar Research Lab" --director-email d@lrl.space   # token from MC_OPERATOR_TOKEN or --token
+mc platform org reinvite <orgId> --user <userId>                                  # new invite for an unaccepted user
 
 # Director
 mc org settings show | set --timezone Europe/London --max-upcoming 3
-mc users invite --email lead@lrl.space --role lead | list | set-role | deactivate
+mc users invite --email lead@lrl.space --role lead | list | set-role | deactivate | reinvite <id>
 mc skills add "Orbital Piloting" | list | rename <id> "<new name>"
 mc approvals list                      # missions pending approval
 mc missions approve <id> [--comment]
@@ -541,7 +542,7 @@ All tenant tables have `org_id uuid NOT NULL`, `created_at`, `updated_at`, RLS e
 | Table | Key columns |
 |---|---|
 | `organisations` | `id`, `name`, `time_zone`, `max_upcoming_missions` (default 3, 1–20) |
-| `users` | `id`, `org_id`, `email` (unique, citext), `name`, `role` enum(`director`,`lead`,`crew`), `password_hash`, `status` enum(`invited`,`active`,`deactivated`) |
+| `users` | `id`, `org_id`, `email` (unique, citext), `name` (null until the invite is accepted), `role` enum(`director`,`lead`,`crew`), `password_hash` (null until accepted), `status` enum(`invited`,`active`,`deactivated`) |
 | `invites` | `id`, `org_id`, `user_id`, `code_hash`, `expires_at`, `used_at` |
 | `refresh_tokens` | `id`, `org_id`, `user_id`, `family_id`, `token_hash`, `expires_at`, `revoked_at` |
 | `crew_profiles` | `user_id` (PK, FK users), `org_id`; created when a Crew Member is invited, kept (dormant) if the user later changes role |

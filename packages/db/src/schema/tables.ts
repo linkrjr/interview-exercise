@@ -39,7 +39,7 @@ export const users = pgTable('users', {
   id: uuid('id').primaryKey(),
   orgId: orgId(),
   email: citext('email').notNull(),
-  name: text('name').notNull(),
+  name: text('name'),
   role: userRole('role').notNull(),
   passwordHash: text('password_hash'),
   status: userStatus('status').notNull().default('invited'),

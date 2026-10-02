@@ -176,6 +176,11 @@ describe('CHECK constraints', () => {
       'UPDATE users SET password_hash = NULL WHERE id = $1',
       () => [a.crewId],
     ],
+    [
+      'an active user without a name',
+      'UPDATE users SET name = NULL WHERE id = $1',
+      () => [a.crewId],
+    ],
   ];
 
   it.each(cases)('rejects %s', async (_name, sql, values) => {
