@@ -15,3 +15,4 @@ export * from './timezone.js';
 export * from './assignments.js';
 export * from './missions.js';
 export * from './notifications.js';
+export * from './matching.js';

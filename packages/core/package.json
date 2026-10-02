@@ -31,6 +31,7 @@
     "@node-rs/argon2": "^2.2.1",
     "drizzle-orm": "^0.45.3",
     "jose": "^6.2.12",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "@mc/matcher": "workspace:*"
   }
 }

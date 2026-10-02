@@ -66,3 +66,4 @@ export {
 } from './missions/state-machine.js';
 export { missionRules } from './policy/index.js';
 export { crewHasCommitmentsGuard, leadOwnsMissionsGuard } from './services/guards.js';
+export { MatchService, teamHashOf } from './matching/match-service.js';

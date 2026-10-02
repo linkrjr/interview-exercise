@@ -1,4 +1,6 @@
 import type { Session } from '@mc/contracts';
+import { createHighsSolver } from '@mc/matcher/highs';
+import type { Solver } from '@mc/matcher';
 import { createDb, newId, type Db } from '@mc/db';
 import { generateKeyPairPem, AccessTokenService } from '../auth/access-tokens.js';
 import type { Actor } from '@mc/contracts';
@@ -20,6 +22,10 @@ function tee(memory: InMemoryAuditWriter, real: AuditWriter): AuditWriter {
     },
   };
 }
+
+let solverPromise: Promise<Solver> | undefined;
+/** One HiGHS instance per test process: loading the WebAssembly module is the only costly part. */
+const sharedSolver = (): Promise<Solver> => (solverPromise ??= createHighsSolver());
 
 export const TEST_PASSWORD = 'correct horse battery staple';
 
@@ -54,6 +60,8 @@ export async function createHarness(
     logger?: Logger;
     guards?: readonly UserChangeGuard[];
     hasher?: PasswordHasher;
+    /** The solver for the matcher (default: HiGHS, shared by the whole test process). */
+    solver?: Solver;
     /** Also persist audit events to `audit_events` (they are always kept in `harness.audit`). */
     dbAudit?: boolean;
   } = {},
@@ -76,6 +84,7 @@ export async function createHarness(
     logger: options.logger ?? silentLogger,
     guards: options.guards,
     hasher: options.hasher,
+    solver: options.solver ?? (await sharedSolver()),
   });
   return { ...services, db, audit, clock, accessTokens, close: () => db.close() };
 }

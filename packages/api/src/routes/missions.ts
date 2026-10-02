@@ -1,10 +1,12 @@
 import {
   AppError,
+  ApplyMatchRequestSchema,
   CreateMissionRequestSchema,
   ErrorCodes,
   ListAssignmentsQuerySchema,
   ListMissionsQuerySchema,
   ListNotificationsQuerySchema,
+  MatchRequestSchema,
   SetCrewRequestSchema,
   SetRequirementsRequestSchema,
   TransitionRequestSchema,
@@ -16,6 +18,7 @@ import { z } from 'zod';
 import type { AppDeps } from '../app.js';
 import { authenticate, requireActor } from '../auth.js';
 import { validationError } from '../problem.js';
+import { SlidingWindowLimiter } from '../rate-limit.js';
 
 const Id = z.uuid();
 
@@ -65,6 +68,9 @@ function withEtag<T>(reply: FastifyReply, mission: T): T {
 export function missionRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { services, accessTokens } = deps;
   const auth = { preHandler: authenticate(accessTokens) };
+  const matchLimiter = deps.matchRate
+    ? new SlidingWindowLimiter(deps.matchRate.max, deps.matchRate.windowMs, deps.clock)
+    : undefined;
 
   app.get('/v1/missions', auth, async (request) => {
     const parsed = ListMissionsQuerySchema.safeParse(request.query);
@@ -139,6 +145,41 @@ export function missionRoutes(app: FastifyInstance, deps: AppDeps): void {
         id(request, 'Mission'),
         parsed.data,
         version,
+      ),
+    );
+  });
+
+  // The auto-matcher: advisory, so proposing changes nothing; applying replaces the tentative crew.
+  app.post('/v1/missions/:id/match', auth, async (request, reply) => {
+    const parsed = MatchRequestSchema.safeParse(request.body ?? {});
+    if (!parsed.success) throw validationError(parsed.error);
+    const actor = requireActor(request);
+    const limit = matchLimiter?.hit(actor.userId);
+    if (limit && !limit.allowed) {
+      reply.header('Retry-After', String(limit.retryAfterSeconds));
+      throw new AppError(
+        ErrorCodes.RATE_LIMITED,
+        429,
+        'Too many match requests, try again shortly',
+        {
+          retryAfterSeconds: limit.retryAfterSeconds,
+        },
+      );
+    }
+    return services.matching.propose(actor, id(request, 'Mission'), parsed.data);
+  });
+
+  app.post('/v1/missions/:id/match/:proposalId/apply', auth, async (request, reply) => {
+    const parsed = ApplyMatchRequestSchema.safeParse(request.body);
+    if (!parsed.success) throw validationError(parsed.error);
+    const version = ifMatch(request);
+    return withEtag(
+      reply,
+      await services.matching.apply(
+        requireActor(request),
+        id(request, 'Mission'),
+        id(request, 'Match proposal', 'proposalId'),
+        { teamHash: parsed.data.teamHash, version },
       ),
     );
   });

@@ -15,6 +15,11 @@ export interface AppDeps {
   /** Static credential accepted only on `/v1/platform/*`. */
   operatorToken: string;
   loginRate: { emailMax: number; ipMax: number; windowMs: number };
+  /**
+   * Per-user limit on the matcher, the most expensive endpoint (DESIGN.md §18). Unset means no limit;
+   * the number is a deployment setting (spec 06).
+   */
+  matchRate?: { max: number; windowMs: number };
   clock: Clock;
 }
 

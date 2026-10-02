@@ -13,6 +13,7 @@ import { emit } from '../context.js';
 import { usageError } from '../errors.js';
 import { crewMissionText, missionTable, missionText } from '../mission-format.js';
 import { resolveSkill } from '../skills-lookup.js';
+import { matchCommands } from './match.js';
 
 const STATUSES = [
   'draft',
@@ -173,6 +174,8 @@ export function missionCommands(program: Command, ctx: Context): void {
           : crewMissionText(mission as CrewMission),
       );
     });
+
+  matchCommands(missions, ctx);
 
   const requirements = missions
     .command('requirements')

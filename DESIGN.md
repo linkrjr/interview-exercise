@@ -320,7 +320,7 @@ Objective, solved **lexicographically** in three passes (each pass fixes the pre
 2. **Workload balance** — minimise `Σ_i x_i · w_i` where `w_i = (load_i + 1)² ` and `load_i` is the person's current upcoming missions. The convex cost prefers spreading work over repeatedly picking the same people. Because there is no seat count, every extra person adds cost, so this pass also yields the smallest team that covers the requirements.
 3. **Skill fit** — maximise `Σ_i x_i · f_i`, where `f_i` rewards level margin above each requirement the person covers (capped at +2 per requirement), so stronger fits win ties without over-concentrating experts (workload already dominates).
 
-Final ties are broken by crew member ID so results are **deterministic**.
+A fourth pass then prefers lower crew member IDs (it minimises the sum of the members' positions in ID order), and the model is built in a canonical order (candidates and requirements sorted by ID) and solved single-threaded with a fixed seed, so the same input always gives the same team. This is a deterministic preference for low IDs, not a guarantee of the lexicographically smallest optimal team.
 
 Guardrails: 2-second solver time limit per pass. If the solver times out, fall back to a greedy heuristic (pick the candidate covering the most still-unmet requirement slots, tie-break by lowest load, then fit), followed by 1-swap local search. The response states which method produced the result.
 
@@ -328,16 +328,17 @@ Guardrails: 2-second solver time limit per pass. If the solver times out, fall b
 
 ```jsonc
 {
-  "missionId": "…",
+  "proposalId": "…", "missionId": "…", "missionVersion": 4,
+  "expiresAt": "…",               // 30 minutes after the proposal was made
   "method": "exact",              // or "heuristic"
   "complete": false,
   "team": [
     { "crewMemberId": "…", "name": "A. Okafor", "email": "a.okafor@lrl.space",
       "upcomingMissions": 1,
-      "covers": [{ "skill": "Orbital Piloting", "level": 5, "required": 4 }] }
+      "covers": [{ "skillId": "…", "skill": "Orbital Piloting", "level": 5, "required": 4 }] }
   ],
   "coverage": [
-    { "skill": "Medicine", "minLevel": 3, "required": 2, "met": 1,
+    { "skillId": "…", "skill": "Medicine", "minLevel": 3, "required": 2, "met": 1,
       "gap": {
         "qualifiedTotal": 4,
         "blocked": { "UNAVAILABLE": 2, "COMMITTED": 1, "AT_CAPACITY": 0, "EXCLUDED": 0 }
@@ -348,11 +349,15 @@ Guardrails: 2-second solver time limit per pass. If the solver times out, fall b
 }
 ```
 
+`met` is the number of team members qualifying for the requirement, at most `required`. `gap` appears only on a requirement that is not met. `qualifiedTotal` counts every active Crew Member holding the skill at the level, and `blocked` counts those who cannot be on the team, each person once, under the first reason that applies in the order of §9.2 (`UNAVAILABLE`, `COMMITTED`, `AT_CAPACITY`, `EXCLUDED`). When a requirement is unmet the team already holds everyone eligible who qualifies, so `qualifiedTotal = met + Σ blocked`. `alternates` has one entry per requirement: the eligible people who qualify but are not on the team, lightest load first, then better skill fit, then lower ID, up to three.
+
 Gap explanations tell the Lead what to change: which constraint is blocking qualified people, so they can move dates, relax a level, or talk to a Director about capacity. Counts are reported rather than names of blocked people, to avoid exposing why a named individual is unavailable.
 
 ### 9.5 Applying
 
 `POST /missions/{id}/match` returns a proposal with a `proposalId`, stored for 30 minutes together with a `teamHash`: a SHA-256 over the proposed team members' email addresses (unique per user), lower-cased, sorted and joined. The hash is returned to the Lead with the proposal. `POST /missions/{id}/match/{proposalId}/apply` takes that `teamHash`, recomputes the hash from the stored proposal's team members' current emails, and applies the proposal (replacing the tentative crew) only if both match the stored hash. This guarantees the team being applied is exactly the team that was proposed and that no member has been dropped or altered since. Otherwise it returns 409 and the Lead re-runs. Submission re-validates regardless.
+
+The proposal also stores the mission version it was computed for, and apply is refused with `409 MATCH_PROPOSAL_STALE` if the mission has changed since (a Lead who edits the dates or the requirements must run the matcher again). Apply requires `If-Match` like every mission change. Hashing joins the lower-cased, sorted emails with newlines and encodes the SHA-256 in hex. The CLI takes the hash explicitly (`--team-hash`), so it confirms the team the Lead looked at.
 
 ---
 
@@ -367,7 +372,7 @@ mission-control/
   packages/
     contracts/   Zod schemas + TypeScript types for every request/response (shared by API and CLI)
     core/        Domain logic: policies, lifecycle state machine, services. No HTTP.
-    matcher/     Pure matching engine (candidate filter, ILP model, heuristic, explanations)
+    matcher/     Pure matching engine (candidate filter, ILP model, heuristic, explanations); the HiGHS adapter is its own entry point, `@mc/matcher/highs`
     db/          Drizzle schema, migrations, RLS policies, tenant-scoped transaction helper
     api/         Fastify server: routes, auth, error mapping, OpenAPI generation
     scheduler/   Lifecycle job (activate / complete / expire)
@@ -478,8 +483,8 @@ Conventions:
 | `POST /v1/missions`, `PATCH /v1/missions/{id}` | Lead / owner | Create, edit |
 | `PUT /v1/missions/{id}/requirements` | owner | Replace requirement set |
 | `PUT /v1/missions/{id}/crew` | owner | Replace tentative crew (Crewing only) |
-| `POST /v1/missions/{id}/match` | owner | Run matcher (body: `exclude`) |
-| `POST /v1/missions/{id}/match/{proposalId}/apply` | owner | Apply proposal |
+| `POST /v1/missions/{id}/match` | owner | Run the matcher on a Crewing mission (body: `exclude`, crew member user IDs; unknown keys such as `pin` are refused). Returns the proposal; changes nothing |
+| `POST /v1/missions/{id}/match/{proposalId}/apply` | owner | Apply a proposal (body: `teamHash`; `If-Match` required). 409 `MATCH_TEAM_HASH_MISMATCH`, `MATCH_PROPOSAL_STALE` (the mission changed since), `MATCH_PROPOSAL_EXPIRED`; 404 for an unknown proposal |
 | `POST /v1/missions/{id}/transitions` | per transition: owning Lead (start_crewing, reopen, submit, withdraw, cancel) or any Director (approve, reject) | Body `{ "action": "start_crewing" \| "reopen" \| "submit" \| "withdraw" \| "approve" \| "reject" \| "cancel", "comment"?: … }` |
 | `GET /v1/assignments/me`, `POST /v1/assignments/{id}/acknowledge` | Crew | Own assignments, acknowledge |
 | `GET /v1/notifications`, `POST /v1/notifications/{id}/read` | all | Inbox |
@@ -519,7 +524,7 @@ mc missions create --name "Artemis Relay" --start 2026-11-02 --end 2026-11-20
 mc missions requirements set <id> --req "Orbital Piloting:4:1" --req "Medicine:3:2"   # or --clear
 mc missions start-crewing <id>
 mc missions match <id> [--exclude <crewId>]   # prints team, coverage, gaps
-mc missions match apply <id> <proposalId>
+mc missions match apply <id> <proposalId> --team-hash <hash>   # the hash printed with the proposal
 mc missions crew set <id> <crewId>...         # or --clear
 # every change takes --version <n>; by default the CLI sends the version it has just read
 mc missions submit | withdraw | reopen | cancel <id>
@@ -611,7 +616,7 @@ Alerts are the core's channel for operational problems that someone must act on.
 - Tenant isolation as in §11, with automated cross-tenant tests on every endpoint.
 - 404 for resources outside the actor's visibility.
 - No PII in logs (emails masked), no secrets in audit payloads.
-- Request size limits, a per-user rate limit on the matcher (it is the most expensive endpoint), initially **30 requests per minute**, configurable, to be re-evaluated.
+- Request size limits, a per-user rate limit on the matcher (it is the most expensive endpoint), initially **30 requests per minute**, configurable, to be re-evaluated. The API has the mechanism (`matchRate`, per user, `429 RATE_LIMITED` with `Retry-After`); setting the number is deployment configuration (spec 06).
 - Dependencies pinned; `pnpm audit` in CI.
 - TLS terminated at the load balancer; HSTS.
 

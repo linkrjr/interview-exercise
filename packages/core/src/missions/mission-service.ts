@@ -323,10 +323,19 @@ export class MissionService {
     actor: Actor,
     missionId: string,
     crewMemberIds: string[],
-    { version }: { version: number },
+    {
+      version,
+      matchProposalId,
+      within,
+    }: { version: number; matchProposalId?: string; within?: Tx },
   ): Promise<Mission> {
     const { audit } = this.deps;
-    return this.mutate(
+    // With `within` the change runs in the caller's transaction (the matcher's apply does its own
+    // checks and the replacement atomically); otherwise it opens its own.
+    const run: typeof this.mutate = within
+      ? (a, id, v, change, statuses) => this.mutateIn(within, a, id, v, change, statuses)
+      : (a, id, v, change, statuses) => this.mutate(a, id, v, change, statuses);
+    return run(
       actor,
       missionId,
       version,
@@ -392,7 +401,10 @@ export class MissionService {
           entityType: 'mission',
           entityId: mission.id,
           before: { crewMemberIds: current.map((a) => a.crewMemberId).sort() },
-          after: { crewMemberIds: [...ids].sort() },
+          after: {
+            crewMemberIds: [...ids].sort(),
+            ...(matchProposalId ? { matchProposalId } : {}),
+          },
           actorId: caller.userId,
         });
         return { row, changed: true };
@@ -705,8 +717,8 @@ export class MissionService {
 
   /**
    * Loads and locks the mission for an edit by its owning Lead, checks the version and that the
-   * status allows it, runs `change`, and returns the refreshed view. `kind: 'edit'` is for details
-   * and requirements (Draft or Crewing); the crew passes `['crewing']` (Crewing only).
+   * status is one of `statuses` (default: Draft or Crewing, for details and requirements; the crew
+   * passes Crewing only), runs `change`, and returns the refreshed view.
    */
   private async mutate(
     actor: Actor,
@@ -722,21 +734,40 @@ export class MissionService {
     const { db, policy } = this.deps;
     policy.requireRole(actor, 'mission.manage');
     const caller = userActor(actor);
-    return db.withTenant(caller.orgId, async (tx) => {
-      const mission = await lockMission(tx, missionId);
-      policy.authorize(actor, 'mission.manage', { leadId: mission.leadId });
-      checkVersion(mission, version);
-      if (!statuses.includes(mission.status)) {
-        throw new AppError(
-          ErrorCodes.MISSION_NOT_EDITABLE,
-          409,
-          `A mission that is ${mission.status} cannot be changed this way`,
-          { missionStatus: mission.status },
-        );
-      }
-      const { row } = await change(tx, mission, caller);
-      return this.staffView(tx, row, caller);
-    });
+    return db.withTenant(caller.orgId, (tx) =>
+      this.mutateIn(tx, actor, missionId, version, change, statuses),
+    );
+  }
+
+  /** `mutate` inside a transaction the caller already holds, for the owning Lead's change. */
+  private async mutateIn(
+    tx: Tx,
+    actor: Actor,
+    missionId: string,
+    version: number,
+    change: (
+      tx: Tx,
+      mission: MissionRow,
+      caller: UserActor,
+    ) => Promise<{ row: MissionRow; changed: boolean }>,
+    statuses: readonly MissionRow['status'][] = EDITABLE_STATUSES,
+  ): Promise<Mission> {
+    const { policy } = this.deps;
+    policy.requireRole(actor, 'mission.manage');
+    const caller = userActor(actor);
+    const mission = await lockMission(tx, missionId);
+    policy.authorize(actor, 'mission.manage', { leadId: mission.leadId });
+    checkVersion(mission, version);
+    if (!statuses.includes(mission.status)) {
+      throw new AppError(
+        ErrorCodes.MISSION_NOT_EDITABLE,
+        409,
+        `A mission that is ${mission.status} cannot be changed this way`,
+        { missionStatus: mission.status },
+      );
+    }
+    const { row } = await change(tx, mission, caller);
+    return this.staffView(tx, row, caller);
   }
 
   private async staffView(tx: Tx, row: MissionRow, actor: UserActor): Promise<Mission> {
@@ -757,7 +788,7 @@ async function findMission(tx: Tx, id: string): Promise<MissionRow | undefined> 
   return row;
 }
 
-async function lockMission(tx: Tx, id: string): Promise<MissionRow> {
+export async function lockMission(tx: Tx, id: string): Promise<MissionRow> {
   const [row] = await tx
     .select()
     .from(schema.missions)
@@ -768,7 +799,7 @@ async function lockMission(tx: Tx, id: string): Promise<MissionRow> {
 }
 
 /** Optimistic concurrency (DESIGN.md §13): a stale version is a 412 carrying the current one. */
-function checkVersion(mission: MissionRow, version: number): void {
+export function checkVersion(mission: MissionRow, version: number): void {
   if (mission.version !== version) {
     throw new AppError(
       ErrorCodes.MISSION_VERSION_MISMATCH,

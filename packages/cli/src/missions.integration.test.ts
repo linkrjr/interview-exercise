@@ -254,3 +254,116 @@ describe('the full manual mission workflow, through the real mc binary', () => {
     expect(blocked.stderr).toContain('mission Held (2027-04-01 to 2027-04-05, pending_approval)');
   });
 });
+
+describe('the auto-matcher, through the real mc binary', () => {
+  it('proposes a team, explains a shortfall, and applies the proposal', async () => {
+    const { director } = await onboardDirector(e2e, uniqueEmail('director'));
+    const lead = await onboardMember(director, 'lead', uniqueEmail('lead'), 'Lee Lead');
+    const ann = await onboardMember(director, 'crew', uniqueEmail('ann'), 'Ann Crew');
+    const bob = await onboardMember(director, 'crew', uniqueEmail('bob'), 'Bob Crew');
+    const cat = await onboardMember(director, 'crew', uniqueEmail('cat'), 'Cat Crew');
+    await director.run(['skills', 'add', 'Medicine']);
+    await ann.machine.run(['profile', 'skill', 'set', 'Medicine', '5']);
+    await bob.machine.run(['profile', 'skill', 'set', 'Medicine', '3']);
+    await cat.machine.run(['profile', 'skill', 'set', 'Medicine', '4']);
+    await cat.machine.run(['profile', 'unavailable', 'add', '2027-03-02', '2027-03-04']);
+
+    const id = (
+      await lead.machine.run([
+        '--json',
+        'missions',
+        'create',
+        '--name',
+        'Match me',
+        '--start',
+        '2027-03-01',
+        '--end',
+        '2027-03-10',
+      ])
+    ).json.id as string;
+    await lead.machine.run(['missions', 'requirements', 'set', id, '--req', 'Medicine:3:3']);
+    await lead.machine.run(['missions', 'start-crewing', id]);
+
+    // Three are needed but one is unavailable: a partial team, with the gap explained by counts, not names.
+    const partial = await lead.machine.run(['missions', 'match', id]);
+    expect(partial.code, partial.stderr).toBe(0);
+    expect(partial.stdout).toContain('NOT every requirement can be met.');
+    expect(partial.stdout).toContain('Medicine level 3+: 2 of 3');
+    expect(partial.stdout).toContain('3 qualified in the organisation; blocked: UNAVAILABLE 1');
+    expect(partial.stdout).not.toContain(cat.userId);
+    expect(partial.stdout).not.toContain('Cat Crew');
+
+    // Needing two instead of three, with Bob excluded.
+    await lead.machine.run(['missions', 'requirements', 'set', id, '--req', 'Medicine:3:2']);
+    const json = await lead.machine.run([
+      '--json',
+      'missions',
+      'match',
+      id,
+      '--exclude',
+      bob.userId,
+    ]);
+    expect(json.code, json.stderr).toBe(0);
+    // Bob is excluded and Cat is away, so only Ann is left for two places: the best partial team.
+    expect(json.json).toMatchObject({ method: 'exact', complete: false });
+    expect(json.json.team.map((t: { crewMemberId: string }) => t.crewMemberId)).toEqual([
+      ann.userId,
+    ]);
+    expect(json.json.coverage[0].gap).toMatchObject({
+      qualifiedTotal: 3,
+      blocked: { UNAVAILABLE: 1, EXCLUDED: 1 },
+    });
+
+    const ok = await lead.machine.run(['--json', 'missions', 'match', id]);
+    expect(ok.json.complete).toBe(true);
+    expect(ok.json.team).toHaveLength(2);
+    const { proposalId, teamHash } = ok.json;
+
+    // The hash confirms the team: a wrong one is refused, the right one applies.
+    const wrong = await lead.machine.run([
+      'missions',
+      'match',
+      'apply',
+      id,
+      proposalId,
+      '--team-hash',
+      '0'.repeat(64),
+    ]);
+    expect(wrong.code).toBe(4);
+    expect(wrong.stderr).toContain('MATCH_TEAM_HASH_MISMATCH');
+    expect((await lead.machine.run(['missions', 'match', 'apply', id, proposalId])).code).toBe(1); // --team-hash is required
+    const applied = await lead.machine.run([
+      '--json',
+      'missions',
+      'match',
+      'apply',
+      id,
+      proposalId,
+      '--team-hash',
+      teamHash,
+    ]);
+    expect(applied.code, applied.stderr).toBe(0);
+    expect(applied.json.crew.map((c: { crewMemberId: string }) => c.crewMemberId).sort()).toEqual(
+      [ann.userId, bob.userId].sort(),
+    );
+    expect(applied.json.crewValidation.valid).toBe(true);
+
+    // The proposal was for the earlier version of the mission, so it cannot be applied again.
+    const again = await lead.machine.run([
+      'missions',
+      'match',
+      'apply',
+      id,
+      proposalId,
+      '--team-hash',
+      teamHash,
+    ]);
+    expect(again.code).toBe(4);
+    expect(again.stderr).toContain('MATCH_PROPOSAL_STALE');
+
+    // Only the owning Lead can match, and the CLI has no way to pin.
+    expect((await director.run(['missions', 'match', id])).code).toBe(2);
+    expect((await lead.machine.run(['missions', 'match', id, '--pin', ann.userId])).code).toBe(1);
+    expect((await lead.machine.run(['missions', 'submit', id])).code).toBe(0);
+  });
+});

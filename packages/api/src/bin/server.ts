@@ -8,6 +8,7 @@ import {
   type Logger,
 } from '@mc/core';
 import { createDb } from '@mc/db';
+import { createHighsSolver } from '@mc/matcher/highs';
 import type { FastifyInstance } from 'fastify';
 import { buildApp, loggerOptions } from '../app.js';
 import { loadConfig } from '../config.js';
@@ -39,6 +40,7 @@ const app = buildApp({
     clock: systemClock,
     logger,
     accessTokens,
+    solver: await createHighsSolver(),
   }),
   accessTokens,
   operatorToken: config.operatorToken,
