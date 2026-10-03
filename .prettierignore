@@ -6,3 +6,7 @@ DESIGN.md
 docs
 CLAUDE.md
 openapi
+
+# Exported chat logs: keep them verbatim
+CLAUDE_CODE_TRANSCRIPT.md
+CLAUDE_DESKTOP_CHAT_TRANSCRIPT.md
