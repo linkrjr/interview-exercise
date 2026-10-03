@@ -138,13 +138,36 @@ mc dev run-scheduler --date 2027-03-02
 
 The API is documented in OpenAPI 3.1 at `GET /v1/openapi.json` (public), and a committed copy is in [openapi/openapi.json](openapi/openapi.json). Sign in with `POST /v1/auth/login`, then send `Authorization: Bearer <accessToken>`. Every change to a mission sends the version you last saw in `If-Match`. Errors are `application/problem+json` with a stable `code`.
 
-## Terminal UI (work in progress)
+## Terminal UI
 
-`packages/tui` is the start of a full-screen terminal client built with [OpenTUI](https://opentui.com/) and React. OpenTUI needs Bun (>= 1.3) or Node 26.4+, so this package runs on Bun while the rest of the repository stays on Node 24.
+`packages/tui` is a full-screen terminal client for the same API, built with [OpenTUI](https://opentui.com/) and React. It shares the CLI's configuration and credentials, so signing in on one signs in on the other. The full description is in [docs/tui.spec.md](docs/tui.spec.md).
+
+What it does:
+
+- **Sign in** with email, organisation and password. **Accept invite**, below the Login button, takes the invite code, your name and a new password (twice) and signs you in.
+- **A navigation bar** shows only what your role can do (←/→ or Tab to choose, Enter on Sign out to leave). `q` quits where it cannot be text; Ctrl+C always quits.
+  - Director: Approvals, Missions, Users, Skills, Settings, Audit log, Alerts, Inbox.
+  - Lead: Missions, New mission, Skills (read only), Inbox.
+  - Crew Member: My profile, My assignments, Inbox.
+- **Tables** (missions, users, skills, audit, alerts, inbox, assignments) scroll with ↑/↓, PgUp/PgDn, Home/End or the mouse wheel, load more pages as you reach the end, and open a row as a popup with Enter or a click (Esc closes it, `r` reloads).
+- **Missions:** a popup shows the mission in full. A Director approves (`a`) or rejects (`r`, a reason is required) a mission waiting for a decision. A Lead, on their own missions, starts crewing (`s`), reopens (`o`), submits (`u`), withdraws (`w`) or cancels (`x`), edits the mission (`e`), sets its requirements (`p`) and its crew (`c`); New mission creates one. Buttons appear only when the server's `allowedActions` allow them.
+- **Users:** invite (`i`), deactivate (`d`) and reinvite (`r`). An invite code is shown once and can be copied with `c`.
+- **Skills** (a Director adds with `a` and renames with `r`), **Settings** (time zone and workload cap, a Save button).
+- **Crew Members** maintain their skills and unavailability and acknowledge assignments.
+
+Colours follow the old Clipper programs: white on blue screens, blue on cyan popups, black on grey form fields.
+
+### Running the TUI
+
+OpenTUI needs Bun 1.3 or later (or Node 26.4+), so this package runs on Bun while the rest of the repository stays on Node 24. Install [Bun](https://bun.sh/), then, with the API running (see [Run everything with Docker Compose](#run-everything-with-docker-compose)):
 
 ```sh
-pnpm build                              # the TUI reads the CLI's config through @mc/cli
-bun packages/tui/src/index.tsx          # or: pnpm --filter @mc/tui start | dev (watch mode)
+pnpm install
+pnpm build                          # the TUI reads the CLI's config through @mc/cli
+mc config set-url http://localhost:3000   # once; the TUI uses the same setting (see the alias above)
+bun packages/tui/src/index.tsx      # or: pnpm --filter @mc/tui start
 ```
 
-It shares the CLI's configuration and credentials (`mc config set-url`, `mc auth login`); press `q` to quit. Tests: `pnpm --filter @mc/tui test:unit`.
+`pnpm --filter @mc/tui dev` runs it in watch mode. Sign in on the login screen, or with `mc auth login` beforehand (a stored session skips the login screen). `MC_CONFIG_DIR` changes where the shared configuration and credentials are kept.
+
+Tests (`bun test`, no server or Docker needed): `pnpm --filter @mc/tui test:unit`.
